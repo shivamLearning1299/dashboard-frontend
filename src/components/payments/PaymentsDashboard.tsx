@@ -1,103 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { IconCard, IconCheck, IconDownload, IconX } from "@/components/icons";
+import { useAuth } from "@/lib/auth-context";
+import {
+  ApiError,
+  billingApi,
+  type BillingCycle,
+  type Invoice,
+  type Plan,
+  type PlanKey,
+  type Subscription,
+} from "@/lib/api";
 
-/* --------------------------------- mock data -------------------------------- */
+const TIER_ORDER: PlanKey[] = ["starter", "pro", "business", "enterprise"];
 
-type PlanId = "starter" | "pro" | "business" | "enterprise";
-
-const TIER_ORDER: PlanId[] = ["starter", "pro", "business", "enterprise"];
-
-type Plan = {
-  id: PlanId;
-  name: string;
-  monthly: number | null;
-  annual: number | null;
-  description: string;
-  features: string[];
-};
-
-const PLANS: Plan[] = [
-  {
-    id: "starter",
-    name: "Starter",
-    monthly: 0,
-    annual: 0,
-    description: "For solo builders trying shivecom out.",
-    features: ["500 AI queries / month", "1 connected data source", "Community support", "7-day query history"],
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    monthly: 49,
-    annual: 39,
-    description: "For small teams shipping on real data.",
-    features: [
-      "10,000 AI queries / month",
-      "5 connected data sources",
-      "Team messaging",
-      "Priority email support",
-      "Saved & scheduled queries",
-    ],
-  },
-  {
-    id: "business",
-    name: "Business",
-    monthly: 199,
-    annual: 159,
-    description: "For growing teams with compliance needs.",
-    features: [
-      "50,000 AI queries / month",
-      "Unlimited data sources",
-      "SSO & audit logs",
-      "Dedicated Slack channel",
-      "99.9% uptime SLA",
-    ],
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    monthly: null,
-    annual: null,
-    description: "For large orgs with custom requirements.",
-    features: [
-      "Unlimited AI queries",
-      "Custom data residency",
-      "Dedicated infrastructure",
-      "Custom SLA & onboarding",
-    ],
-  },
-];
-
-const PLAN_LOOKUP: Record<PlanId, Plan> = Object.fromEntries(PLANS.map((p) => [p.id, p])) as Record<PlanId, Plan>;
-
+// No backend model for a stored payment method (no Stripe/PSP integration
+// yet) — this card stays hardcoded.
 const PAYMENT_METHOD = { brand: "Visa", last4: "4242", expiry: "09/27" };
 
-type InvoiceStatus = "paid" | "failed" | "refunded";
-
-type Invoice = {
-  id: string;
-  date: string;
-  description: string;
-  amount: number;
-  status: InvoiceStatus;
-};
-
-const INVOICES: Invoice[] = [
-  { id: "INV-2091", date: "Jul 14, 2026", description: "Pro plan · Jul 14 – Aug 14", amount: 49, status: "paid" },
-  { id: "INV-2077", date: "Jun 14, 2026", description: "Pro plan · Jun 14 – Jul 14", amount: 49, status: "paid" },
-  { id: "INV-2054", date: "May 14, 2026", description: "Pro plan · May 14 – Jun 14", amount: 49, status: "paid" },
-  { id: "INV-2033", date: "Apr 14, 2026", description: "Pro plan · Apr 14 – May 14", amount: 49, status: "failed" },
-  { id: "INV-2033-R", date: "Apr 16, 2026", description: "Pro plan · Apr 14 – May 14 (retry)", amount: 49, status: "paid" },
-  { id: "INV-2011", date: "Mar 14, 2026", description: "Starter → Pro, prorated upgrade", amount: 18, status: "paid" },
-];
-
-const INVOICE_STATUS_STYLE: Record<InvoiceStatus, string> = {
-  paid: "border-success/30 bg-success/10 text-success",
-  failed: "border-danger/30 bg-danger/10 text-danger",
-  refunded: "border-border-strong bg-surface-2 text-ink-2",
+const INVOICE_STATUS_STYLE: Record<Invoice["status"], string> = {
+  PAID: "border-success/30 bg-success/10 text-success",
+  FAILED: "border-danger/30 bg-danger/10 text-danger",
+  REFUNDED: "border-border-strong bg-surface-2 text-ink-2",
 };
 
 /* -------------------------------- formatting -------------------------------- */
@@ -106,7 +32,11 @@ function formatUsd(n: number) {
   return `$${n.toLocaleString("en-US")}`;
 }
 
-function tierIndex(id: PlanId) {
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function tierIndex(id: PlanKey) {
   return TIER_ORDER.indexOf(id);
 }
 
@@ -119,12 +49,18 @@ type DialogState =
 
 function ConfirmDialog({
   state,
+  currentPlanName,
   renewsOn,
+  pending,
+  error,
   onClose,
   onConfirm,
 }: {
   state: DialogState;
+  currentPlanName: string;
   renewsOn: string;
+  pending: boolean;
+  error: string | null;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -134,17 +70,17 @@ function ConfirmDialog({
   const isUpgrade = state.kind === "change" && state.direction === "upgrade";
 
   const title = isCancel
-    ? "Cancel your Pro plan?"
+    ? `Cancel your ${currentPlanName} plan?`
     : state.kind === "change"
       ? `${state.direction === "upgrade" ? "Upgrade" : "Downgrade"} to ${state.plan.name}?`
       : "";
 
   const body = isCancel
-    ? `Your workspace keeps Pro access until ${renewsOn}, then moves to Starter. You can resume anytime before then.`
+    ? `Your workspace keeps ${currentPlanName} access until ${renewsOn}, then moves to Starter. You can resume anytime before then.`
     : state.kind === "change"
       ? isUpgrade
         ? `You'll be charged a prorated amount today, then ${
-            state.plan.monthly !== null ? `${formatUsd(state.plan.monthly)}/mo` : "your custom rate"
+            state.plan.monthlyPrice !== null ? `${formatUsd(state.plan.monthlyPrice)}/mo` : "your custom rate"
           } going forward.`
         : `Your plan changes at the end of the current billing cycle on ${renewsOn}. No refund is issued for the current period.`
       : "";
@@ -167,22 +103,35 @@ function ConfirmDialog({
           {title}
         </h2>
         <p className="mt-2 text-sm text-ink-2">{body}</p>
+        {error && (
+          <p className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {error}
+          </p>
+        )}
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium text-ink-2 hover:text-ink"
+            disabled={pending}
+            className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium text-ink-2 hover:text-ink disabled:opacity-60"
           >
             Never mind
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className={`rounded-lg px-3.5 py-2 text-sm font-medium text-white transition-colors ${
+            disabled={pending}
+            className={`rounded-lg px-3.5 py-2 text-sm font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
               isCancel ? "bg-danger hover:bg-danger/85" : "bg-accent hover:bg-accent-2"
             }`}
           >
-            {isCancel ? "Confirm cancellation" : isUpgrade ? "Confirm upgrade" : "Confirm downgrade"}
+            {pending
+              ? "Working…"
+              : isCancel
+                ? "Confirm cancellation"
+                : isUpgrade
+                  ? "Confirm upgrade"
+                  : "Confirm downgrade"}
           </button>
         </div>
       </div>
@@ -221,7 +170,7 @@ function CurrentPlanCard({
         )}
       </div>
       <p className="text-sm text-ink-2">
-        {currentPlan.monthly !== null ? `${formatUsd(currentPlan.monthly)}/mo` : "Custom pricing"} ·{" "}
+        {currentPlan.monthlyPrice !== null ? `${formatUsd(currentPlan.monthlyPrice)}/mo` : "Custom pricing"} ·{" "}
         {status === "active" ? `renews ${renewsOn}` : `ends ${renewsOn}`}
       </p>
       {status === "active" ? (
@@ -259,17 +208,25 @@ function PaymentMethodCard() {
   );
 }
 
-function NextInvoiceCard({ currentPlan, renewsOn }: { currentPlan: Plan; renewsOn: string }) {
+function NextInvoiceCard({
+  currentPlan,
+  renewsOn,
+  billedToEmail,
+}: {
+  currentPlan: Plan;
+  renewsOn: string;
+  billedToEmail: string;
+}) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
       <p className="font-mono text-xs uppercase tracking-wide text-ink-3">Next invoice</p>
       <div className="flex items-baseline gap-1.5">
         <span className="font-mono text-2xl tabular-nums text-ink">
-          {currentPlan.monthly !== null ? formatUsd(currentPlan.monthly) : "—"}
+          {currentPlan.monthlyPrice !== null ? formatUsd(currentPlan.monthlyPrice) : "—"}
         </span>
         <span className="text-sm text-ink-3">due {renewsOn}</span>
       </div>
-      <p className="text-sm text-ink-2">Billed to priya@acme.dev</p>
+      <p className="text-sm text-ink-2">Billed to {billedToEmail}</p>
     </div>
   );
 }
@@ -310,13 +267,13 @@ function PlanCard({
 }: {
   plan: Plan;
   annual: boolean;
-  currentPlanId: PlanId;
+  currentPlanId: PlanKey;
   onSelect: (plan: Plan, direction: "upgrade" | "downgrade") => void;
 }) {
-  const isCurrent = plan.id === currentPlanId;
-  const isPopular = !isCurrent && plan.id === "pro";
-  const diff = tierIndex(plan.id) - tierIndex(currentPlanId);
-  const price = annual ? plan.annual : plan.monthly;
+  const isCurrent = plan.key === currentPlanId;
+  const isPopular = !isCurrent && plan.key === "pro";
+  const diff = tierIndex(plan.key) - tierIndex(currentPlanId);
+  const price = annual ? plan.annualPrice : plan.monthlyPrice;
 
   return (
     <div
@@ -364,7 +321,7 @@ function PlanCard({
         ))}
       </ul>
 
-      {plan.id === "enterprise" ? (
+      {plan.key === "enterprise" ? (
         <a
           href="mailto:sales@shivecom.dev?subject=Enterprise%20plan"
           className="rounded-lg border border-border py-2 text-center text-sm font-medium text-ink transition-colors hover:border-border-strong"
@@ -400,60 +357,64 @@ function PlanCard({
   );
 }
 
-function BillingHistory() {
+function BillingHistory({ invoices }: { invoices: Invoice[] }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-5 py-4">
         <p className="text-sm font-medium text-ink">Billing history</p>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] border-collapse text-sm">
-          <thead>
-            <tr className="border-b border-border bg-surface-2">
-              <th className="px-5 py-2.5 text-left font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
-                Date
-              </th>
-              <th className="px-5 py-2.5 text-left font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
-                Description
-              </th>
-              <th className="px-5 py-2.5 text-right font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
-                Amount
-              </th>
-              <th className="px-5 py-2.5 text-left font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
-                Status
-              </th>
-              <th className="px-5 py-2.5 text-right font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
-                Invoice
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {INVOICES.map((inv) => (
-              <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-surface-2/60">
-                <td className="px-5 py-2.5 text-ink-2">{inv.date}</td>
-                <td className="px-5 py-2.5 text-ink-2">{inv.description}</td>
-                <td className="px-5 py-2.5 text-right font-mono tabular-nums text-ink">{formatUsd(inv.amount)}</td>
-                <td className="px-5 py-2.5">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${INVOICE_STATUS_STYLE[inv.status]}`}
-                  >
-                    {inv.status}
-                  </span>
-                </td>
-                <td className="px-5 py-2.5 text-right">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1.5 rounded-md p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink"
-                    title={`Download ${inv.id}.pdf`}
-                  >
-                    <IconDownload className="h-4 w-4" />
-                  </button>
-                </td>
+      {invoices.length === 0 ? (
+        <p className="px-5 py-6 text-sm text-ink-3">No invoices yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[560px] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-border bg-surface-2">
+                <th className="px-5 py-2.5 text-left font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
+                  Date
+                </th>
+                <th className="px-5 py-2.5 text-left font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
+                  Description
+                </th>
+                <th className="px-5 py-2.5 text-right font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
+                  Amount
+                </th>
+                <th className="px-5 py-2.5 text-left font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
+                  Status
+                </th>
+                <th className="px-5 py-2.5 text-right font-mono text-xs font-medium uppercase tracking-wide text-ink-3">
+                  Invoice
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {invoices.map((inv) => (
+                <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-surface-2/60">
+                  <td className="px-5 py-2.5 text-ink-2">{formatDate(inv.issuedAt)}</td>
+                  <td className="px-5 py-2.5 text-ink-2">{inv.description}</td>
+                  <td className="px-5 py-2.5 text-right font-mono tabular-nums text-ink">{formatUsd(inv.amount)}</td>
+                  <td className="px-5 py-2.5">
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${INVOICE_STATUS_STYLE[inv.status]}`}
+                    >
+                      {inv.status.toLowerCase()}
+                    </span>
+                  </td>
+                  <td className="px-5 py-2.5 text-right">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-md p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink"
+                      title={`Download ${inv.id}.pdf`}
+                    >
+                      <IconDownload className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -474,47 +435,110 @@ function Banner({ message, onDismiss }: { message: string; onDismiss: () => void
 
 /* --------------------------------- page root --------------------------------- */
 
-const RENEWS_ON = "Aug 14, 2026";
-
 export default function PaymentsDashboard() {
-  const [currentPlanId, setCurrentPlanId] = useState<PlanId>("pro");
-  const [status, setStatus] = useState<"active" | "canceling">("active");
+  const { user } = useAuth();
+  const [pageLoading, setPageLoading] = useState(true);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [annual, setAnnual] = useState(false);
   const [dialog, setDialog] = useState<DialogState>({ kind: "none" });
+  const [dialogPending, setDialogPending] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
 
-  const currentPlan = PLAN_LOOKUP[currentPlanId];
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [plansList, sub, invoicesList] = await Promise.all([
+          billingApi.plans(),
+          billingApi.subscription(),
+          billingApi.invoices(),
+        ]);
+        if (cancelled) return;
+        setPlans(plansList);
+        setSubscription(sub);
+        setAnnual(sub.billingCycle === "ANNUAL");
+        setInvoices(invoicesList);
+      } finally {
+        if (!cancelled) setPageLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function closeDialog() {
+    if (dialogPending) return;
     setDialog({ kind: "none" });
+    setDialogError(null);
   }
 
-  function confirmDialog() {
-    if (dialog.kind === "change") {
-      setCurrentPlanId(dialog.plan.id);
-      setStatus("active");
-      setBanner(`You're now on the ${dialog.plan.name} plan. Changes apply immediately.`);
-    } else if (dialog.kind === "cancel") {
-      setStatus("canceling");
-    }
-    closeDialog();
+  function openDialog(next: DialogState) {
+    setDialogError(null);
+    setDialog(next);
   }
+
+  async function confirmDialog() {
+    setDialogPending(true);
+    setDialogError(null);
+    try {
+      if (dialog.kind === "change") {
+        const cycle: BillingCycle = annual ? "ANNUAL" : "MONTHLY";
+        const updated = await billingApi.changePlan(dialog.plan.key as "starter" | "pro" | "business", cycle);
+        setSubscription(updated);
+        setBanner(`You're now on the ${dialog.plan.name} plan. Changes apply immediately.`);
+      } else if (dialog.kind === "cancel") {
+        const updated = await billingApi.cancel();
+        setSubscription(updated);
+      }
+      setDialog({ kind: "none" });
+    } catch (err) {
+      setDialogError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+    } finally {
+      setDialogPending(false);
+    }
+  }
+
+  async function handleResume() {
+    const updated = await billingApi.resume();
+    setSubscription(updated);
+  }
+
+  if (pageLoading || !subscription || !user) {
+    return (
+      <AppShell active="payments" title="Payments">
+        <div className="flex flex-1 items-center justify-center">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        </div>
+      </AppShell>
+    );
+  }
+
+  const currentPlan = plans.find((p) => p.key === subscription.planKey);
+  const renewsOn = formatDate(subscription.currentPeriodEnd);
+  const status = subscription.status === "CANCELING" ? "canceling" : "active";
 
   return (
     <AppShell active="payments" title="Payments">
       {banner && <Banner message={banner} onDismiss={() => setBanner(null)} />}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <CurrentPlanCard
-          currentPlan={currentPlan}
-          status={status}
-          renewsOn={RENEWS_ON}
-          onCancel={() => setDialog({ kind: "cancel" })}
-          onResume={() => setStatus("active")}
-        />
-        <PaymentMethodCard />
-        <NextInvoiceCard currentPlan={currentPlan} renewsOn={RENEWS_ON} />
-      </div>
+      {currentPlan && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <CurrentPlanCard
+            currentPlan={currentPlan}
+            status={status}
+            renewsOn={renewsOn}
+            onCancel={() => openDialog({ kind: "cancel" })}
+            onResume={() => void handleResume()}
+          />
+          <PaymentMethodCard />
+          <NextInvoiceCard currentPlan={currentPlan} renewsOn={renewsOn} billedToEmail={user.email} />
+        </div>
+      )}
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -526,21 +550,31 @@ export default function PaymentsDashboard() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {PLANS.map((plan) => (
+          {plans.map((plan) => (
             <PlanCard
-              key={plan.id}
+              key={plan.key}
               plan={plan}
               annual={annual}
-              currentPlanId={currentPlanId}
-              onSelect={(p, direction) => setDialog({ kind: "change", plan: p, direction })}
+              currentPlanId={subscription.planKey}
+              onSelect={(p, direction) => openDialog({ kind: "change", plan: p, direction })}
             />
           ))}
         </div>
       </div>
 
-      <BillingHistory />
+      <BillingHistory invoices={invoices} />
 
-      <ConfirmDialog state={dialog} renewsOn={RENEWS_ON} onClose={closeDialog} onConfirm={confirmDialog} />
+      {currentPlan && (
+        <ConfirmDialog
+          state={dialog}
+          currentPlanName={currentPlan.name}
+          renewsOn={renewsOn}
+          pending={dialogPending}
+          error={dialogError}
+          onClose={closeDialog}
+          onConfirm={() => void confirmDialog()}
+        />
+      )}
     </AppShell>
   );
 }

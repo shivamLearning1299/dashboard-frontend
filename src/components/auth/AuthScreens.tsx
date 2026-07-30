@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
 
 /* ---------------------------------- icons ---------------------------------- */
 
@@ -97,70 +99,78 @@ function AuthShell({ children }: { children: React.ReactNode }) {
 
 /* ---------------------------------- login ------------------------------------ */
 
-type Pending = null | "password" | "github" | "google";
+type Mode = "login" | "signup";
 
 export function LoginScreen() {
   const router = useRouter();
+  const { login, register } = useAuth();
+  const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
-  const [pending, setPending] = useState<Pending>(null);
+  const [errors, setErrors] = useState<{ email?: string; password?: string; organizationName?: string }>({});
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
 
-  function goToDashboard() {
-    window.setTimeout(() => router.push("/"), 700);
-  }
-
-  function handleOAuth(provider: "github" | "google") {
-    if (pending) return;
-    setPending(provider);
-    goToDashboard();
-  }
-
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (pending) return;
 
-    const nextErrors: { email?: string; password?: string } = {};
+    const nextErrors: { email?: string; password?: string; organizationName?: string } = {};
     if (!email.trim()) nextErrors.email = "Enter your email";
     else if (!email.includes("@")) nextErrors.email = "Enter a valid email address";
     if (!password) nextErrors.password = "Enter your password";
-    else if (password.length < 6) nextErrors.password = "Password must be at least 6 characters";
+    else if (password.length < 8) nextErrors.password = "Password must be at least 8 characters";
+    if (mode === "signup" && !organizationName.trim()) nextErrors.organizationName = "Enter a workspace name";
 
     setErrors(nextErrors);
+    setFormError(null);
     if (Object.keys(nextErrors).length > 0) return;
 
-    setPending("password");
-    goToDashboard();
+    setPending(true);
+    try {
+      if (mode === "login") {
+        await login(email, password);
+      } else {
+        await register(email, password, organizationName.trim());
+      }
+      router.push("/");
+    } catch (err) {
+      setFormError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+      setPending(false);
+    }
   }
 
-  const disabled = pending !== null;
+  const disabled = pending;
 
   return (
     <AuthShell>
       <BrandMark />
 
       <div className="rounded-xl border border-border bg-surface p-8">
-        <h1 className="mb-1 text-lg font-semibold text-ink">Sign in to your workspace</h1>
+        <h1 className="mb-1 text-lg font-semibold text-ink">
+          {mode === "login" ? "Sign in to your workspace" : "Create your workspace"}
+        </h1>
         <p className="mb-6 text-sm text-ink-2">Query your data, manage billing, and message your team.</p>
 
         <div className="flex flex-col gap-2">
           <button
             type="button"
-            onClick={() => handleOAuth("github")}
-            disabled={disabled}
-            className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-2.5 text-sm font-medium text-ink transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-60"
+            disabled
+            title="Not connected yet"
+            className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-2.5 text-sm font-medium text-ink transition-colors disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {pending === "github" ? <IconSpinner className="h-4 w-4" /> : <IconGithub className="h-4 w-4" />}
+            <IconGithub className="h-4 w-4" />
             Continue with GitHub
           </button>
           <button
             type="button"
-            onClick={() => handleOAuth("google")}
-            disabled={disabled}
-            className="flex items-center justify-center gap-2 rounded-lg border border-[#DADCE0] bg-white py-2.5 text-sm font-medium text-[#1F1F1F] transition-colors hover:bg-[#F8F9FA] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled
+            title="Not connected yet"
+            className="flex items-center justify-center gap-2 rounded-lg border border-[#DADCE0] bg-white py-2.5 text-sm font-medium text-[#1F1F1F] transition-colors disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {pending === "google" ? <IconSpinner className="h-4 w-4" /> : <IconGoogle className="h-4 w-4" />}
+            <IconGoogle className="h-4 w-4" />
             Continue with Google
           </button>
         </div>
@@ -170,6 +180,12 @@ export function LoginScreen() {
           <span className="font-mono text-[11px] uppercase tracking-wide text-ink-3">or continue with email</span>
           <span className="h-px flex-1 bg-border" />
         </div>
+
+        {formError && (
+          <p className="mb-4 rounded-lg border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-sm text-danger">
+            {formError}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
           <div>
@@ -195,20 +211,47 @@ export function LoginScreen() {
             )}
           </div>
 
+          {mode === "signup" && (
+            <div>
+              <label htmlFor="organizationName" className="mb-1.5 block text-xs font-medium text-ink-2">
+                Workspace name
+              </label>
+              <input
+                id="organizationName"
+                type="text"
+                autoComplete="organization"
+                value={organizationName}
+                onChange={(e) => setOrganizationName(e.target.value)}
+                disabled={disabled}
+                aria-invalid={Boolean(errors.organizationName)}
+                aria-describedby={errors.organizationName ? "org-error" : undefined}
+                placeholder="Acme Analytics"
+                className="w-full rounded-lg border border-border-strong bg-bg px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40 disabled:opacity-60"
+              />
+              {errors.organizationName && (
+                <p id="org-error" className="mt-1.5 text-xs text-danger">
+                  {errors.organizationName}
+                </p>
+              )}
+            </div>
+          )}
+
           <div>
             <div className="mb-1.5 flex items-center justify-between">
               <label htmlFor="password" className="block text-xs font-medium text-ink-2">
                 Password
               </label>
-              <button type="button" className="text-xs text-accent hover:text-accent-2">
-                Forgot password?
-              </button>
+              {mode === "login" && (
+                <button type="button" className="text-xs text-accent hover:text-accent-2">
+                  Forgot password?
+                </button>
+              )}
             </div>
             <div className="relative">
               <input
                 id="password"
                 type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={disabled}
@@ -239,16 +282,49 @@ export function LoginScreen() {
             disabled={disabled}
             className="mt-1 flex items-center justify-center gap-2 rounded-lg bg-accent py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {pending === "password" && <IconSpinner className="h-4 w-4" />}
-            {pending === "password" ? "Signing in…" : "Sign in"}
+            {pending && <IconSpinner className="h-4 w-4" />}
+            {pending
+              ? mode === "login"
+                ? "Signing in…"
+                : "Creating workspace…"
+              : mode === "login"
+                ? "Sign in"
+                : "Create workspace"}
           </button>
         </form>
 
         <p className="mt-6 text-center text-sm text-ink-2">
-          Don&rsquo;t have an account?{" "}
-          <button type="button" className="text-accent hover:text-accent-2">
-            Sign up
-          </button>
+          {mode === "login" ? (
+            <>
+              Don&rsquo;t have an account?{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("signup");
+                  setErrors({});
+                  setFormError(null);
+                }}
+                className="text-accent hover:text-accent-2"
+              >
+                Sign up
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("login");
+                  setErrors({});
+                  setFormError(null);
+                }}
+                className="text-accent hover:text-accent-2"
+              >
+                Sign in
+              </button>
+            </>
+          )}
         </p>
       </div>
 
@@ -262,6 +338,17 @@ export function LoginScreen() {
 /* ------------------------------- logged out ----------------------------------- */
 
 export function LoggedOutScreen() {
+  const { user, logout } = useAuth();
+  // Snapshot at mount so the name doesn't disappear once logout() clears `user`.
+  const [workspaceName] = useState(() => user?.organizations[0]?.org.name);
+
+  useEffect(() => {
+    void logout();
+    // Only run once on mount — logging out again on every render (e.g. if
+    // `logout` identity changes) would just be redundant no-op API calls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <AuthShell>
       <BrandMark />
@@ -283,7 +370,9 @@ export function LoggedOutScreen() {
           Sign back in
         </Link>
 
-        <p className="mt-4 font-mono text-[11px] text-ink-3">Signed out of Acme Analytics</p>
+        {workspaceName && (
+          <p className="mt-4 font-mono text-[11px] text-ink-3">Signed out of {workspaceName}</p>
+        )}
       </div>
     </AuthShell>
   );
