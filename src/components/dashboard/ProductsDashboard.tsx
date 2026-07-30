@@ -2,45 +2,15 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { AppShell } from "@/components/shell/AppShell";
+import {
+  IconChevron,
+  IconPlus,
+  IconWarning,
+  type IconProps,
+} from "@/components/icons";
 
-/* ---------------------------------- icons ---------------------------------- */
-/* Minimal hand-rolled stroke icons, 20x20, consistent weight — no icon library. */
-
-type IconProps = { className?: string };
-
-function IconGrid({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
-      <rect x="3" y="3" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.5" />
-      <rect x="11" y="3" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.5" />
-      <rect x="3" y="11" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.5" />
-      <rect x="11" y="11" width="6" height="6" rx="1.2" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function IconCard({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
-      <rect x="2.5" y="4.5" width="15" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M2.5 8h15" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M5 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function IconMessage({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
-      <path
-        d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v6A1.5 1.5 0 0 1 15.5 13H8l-3.5 3v-3H4.5A1.5 1.5 0 0 1 3 11.5v-6Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+/* ------------------------------ page-specific icons --------------------------- */
 
 function IconDatabase({ className }: IconProps) {
   return (
@@ -48,14 +18,6 @@ function IconDatabase({ className }: IconProps) {
       <ellipse cx="10" cy="5" rx="6.5" ry="2.2" stroke="currentColor" strokeWidth="1.5" />
       <path d="M3.5 5v10c0 1.2 2.9 2.2 6.5 2.2s6.5-1 6.5-2.2V5" stroke="currentColor" strokeWidth="1.5" />
       <path d="M3.5 10c0 1.2 2.9 2.2 6.5 2.2s6.5-1 6.5-2.2" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function IconChevron({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
-      <path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -85,37 +47,7 @@ function IconBars({ className }: IconProps) {
   );
 }
 
-function IconLogOut({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
-      <path d="M8 17H4.8A1.8 1.8 0 0 1 3 15.2V4.8A1.8 1.8 0 0 1 4.8 3H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M13 13.5 17 10l-4-3.5M17 10H7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function IconWarning({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
-      <path d="M10 3.2 17.5 16H2.5L10 3.2Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-      <path d="M10 8.3v3.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="10" cy="13.6" r="0.9" fill="currentColor" />
-    </svg>
-  );
-}
-
-function IconPlus({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
-      <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 /* --------------------------------- mock data -------------------------------- */
-
-const WORKSPACE = "Acme Analytics";
-const USER = { name: "Priya Raman", email: "priya@acme.dev", initials: "PR" };
 
 const PLAN = {
   tier: "Pro",
@@ -373,87 +305,6 @@ function BarChart({
 
 /* ---------------------------------- layout ----------------------------------- */
 
-function Sidebar() {
-  return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-surface md:flex">
-      <div className="flex items-center gap-2 px-5 py-5">
-        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-xs font-bold text-white">
-          s
-        </span>
-        <span className="font-mono text-sm font-medium tracking-wide text-ink">shivecom</span>
-      </div>
-
-      <nav className="flex flex-1 flex-col gap-1 px-3 py-2" aria-label="Primary">
-        <a
-          href="#"
-          aria-current="page"
-          className="flex items-center gap-3 rounded-lg bg-surface-2 px-3 py-2 text-sm font-medium text-ink"
-        >
-          <IconGrid className="h-4 w-4 text-accent" />
-          Overview
-        </a>
-        <button
-          type="button"
-          className="flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-3"
-          title="Payments dashboard — coming soon"
-        >
-          <IconCard className="h-4 w-4" />
-          <span className="flex-1 text-left">Payments</span>
-          <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Soon</span>
-        </button>
-        <button
-          type="button"
-          className="flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-3"
-          title="Messaging — coming soon"
-        >
-          <IconMessage className="h-4 w-4" />
-          <span className="flex-1 text-left">Messages</span>
-          <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Soon</span>
-        </button>
-      </nav>
-
-      <div className="flex items-center gap-3 border-t border-border px-4 py-4">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 font-mono text-xs font-medium text-accent">
-          {USER.initials}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-ink">{USER.name}</p>
-          <p className="truncate text-xs text-ink-3">{USER.email}</p>
-        </div>
-        <Link
-          href="/logout"
-          className="rounded-md p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-          title="Sign out"
-        >
-          <IconLogOut className="h-4 w-4" />
-        </Link>
-      </div>
-    </aside>
-  );
-}
-
-function Topbar() {
-  return (
-    <header className="flex items-center justify-between border-b border-border px-6 py-5 md:px-8">
-      <div>
-        <p className="font-mono text-xs uppercase tracking-wide text-ink-3">{WORKSPACE}</p>
-        <h1 className="text-xl font-semibold text-ink">Overview</h1>
-      </div>
-      <div className="flex items-center gap-3">
-        <span className="rounded-full border border-border bg-surface px-3 py-1 font-mono text-xs text-ink-2">
-          env: prod
-        </span>
-        <button
-          type="button"
-          className="rounded-lg bg-accent px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          Upgrade plan
-        </button>
-      </div>
-    </header>
-  );
-}
-
 function StatRow() {
   const pct = Math.round((USAGE.used / USAGE.limit) * 100);
   const tone = usageTone(pct);
@@ -471,9 +322,9 @@ function StatRow() {
         <p className="text-sm text-ink-2">
           {PLAN.price} · renews {PLAN.renewsOn}
         </p>
-        <button type="button" className="mt-1 self-start text-sm text-accent hover:text-accent-2">
+        <Link href="/payments" className="mt-1 self-start text-sm text-accent hover:text-accent-2">
           Manage billing →
-        </button>
+        </Link>
       </div>
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
@@ -589,8 +440,11 @@ function QueryComposer({
         <div className={`mt-3 flex items-center gap-2 text-xs ${TONE_TEXT[tone]}`}>
           <IconWarning className="h-3.5 w-3.5" />
           <span>
-            You&rsquo;re at {pct}% of your monthly query limit. <span className="text-accent">Upgrade plan</span> to
-            keep querying without interruption.
+            You&rsquo;re at {pct}% of your monthly query limit.{" "}
+            <Link href="/payments" className="text-accent hover:text-accent-2">
+              Upgrade plan
+            </Link>{" "}
+            to keep querying without interruption.
           </span>
         </div>
       )}
@@ -810,24 +664,24 @@ export default function ProductsDashboard() {
   }
 
   return (
-    <div className="flex min-h-screen bg-bg text-ink">
-      <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar />
-        <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-6 px-6 py-8 md:px-8">
-          <StatRow />
-          <QueryComposer
-            queryText={queryText}
-            onChangeText={setQueryText}
-            onRun={handleRun}
-            isRunning={isRunning}
-          />
-          <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[1fr_320px]">
-            <ResultsPanel result={activeResult} isRunning={isRunning} view={view} onChangeView={setView} />
-            <RecentQueriesRail onSelect={runDataset} />
-          </div>
-        </main>
+    <AppShell
+      active="overview"
+      title="Overview"
+      headerRight={
+        <Link
+          href="/payments"
+          className="rounded-lg bg-accent px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          Upgrade plan
+        </Link>
+      }
+    >
+      <StatRow />
+      <QueryComposer queryText={queryText} onChangeText={setQueryText} onRun={handleRun} isRunning={isRunning} />
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[1fr_320px]">
+        <ResultsPanel result={activeResult} isRunning={isRunning} view={view} onChangeView={setView} />
+        <RecentQueriesRail onSelect={runDataset} />
       </div>
-    </div>
+    </AppShell>
   );
 }
