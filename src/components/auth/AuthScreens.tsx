@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { ApiError } from "@/lib/auth/api";
 
 /* ---------------------------------- icons ---------------------------------- */
 
@@ -97,41 +99,67 @@ function AuthShell({ children }: { children: React.ReactNode }) {
 
 /* ---------------------------------- login ------------------------------------ */
 
-type Pending = null | "password" | "github" | "google";
+type Mode = "login" | "register";
+type Pending = null | "submit" | "github" | "google";
 
 export function LoginScreen() {
   const router = useRouter();
+  const { login, register, status } = useAuth();
+
+  const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [errors, setErrors] = useState<{ email?: string; password?: string; organizationName?: string }>({});
+  const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending>(null);
 
-  function goToDashboard() {
-    window.setTimeout(() => router.push("/"), 700);
+  useEffect(() => {
+    if (status === "authenticated") router.replace("/");
+  }, [status, router]);
+
+  function toggleMode() {
+    setMode((m) => (m === "login" ? "register" : "login"));
+    setErrors({});
+    setNotice(null);
   }
 
   function handleOAuth(provider: "github" | "google") {
     if (pending) return;
-    setPending(provider);
-    goToDashboard();
+    setNotice(
+      `${provider === "github" ? "GitHub" : "Google"} sign-in isn't connected yet — use email and password below.`,
+    );
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (pending) return;
+    setNotice(null);
 
-    const nextErrors: { email?: string; password?: string } = {};
+    const nextErrors: { email?: string; password?: string; organizationName?: string } = {};
     if (!email.trim()) nextErrors.email = "Enter your email";
     else if (!email.includes("@")) nextErrors.email = "Enter a valid email address";
     if (!password) nextErrors.password = "Enter your password";
-    else if (password.length < 6) nextErrors.password = "Password must be at least 6 characters";
+    else if (mode === "register" && password.length < 8) nextErrors.password = "Password must be at least 8 characters";
+    if (mode === "register" && !organizationName.trim()) nextErrors.organizationName = "Enter your organization's name";
 
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
-    setPending("password");
-    goToDashboard();
+    setPending("submit");
+    try {
+      if (mode === "register") {
+        await register(email, password, organizationName);
+      } else {
+        await login(email, password);
+      }
+      // Redirect happens via the `status === "authenticated"` effect above.
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Something went wrong. Please try again.";
+      setErrors((prev) => ({ ...prev, password: message }));
+      setPending(null);
+    }
   }
 
   const disabled = pending !== null;
@@ -141,8 +169,14 @@ export function LoginScreen() {
       <BrandMark />
 
       <div className="rounded-xl border border-border bg-surface p-8">
-        <h1 className="mb-1 text-lg font-semibold text-ink">Sign in to your workspace</h1>
-        <p className="mb-6 text-sm text-ink-2">Query your data, manage billing, and message your team.</p>
+        <h1 className="mb-1 text-lg font-semibold text-ink">
+          {mode === "login" ? "Sign in to your workspace" : "Create your workspace"}
+        </h1>
+        <p className="mb-6 text-sm text-ink-2">
+          {mode === "login"
+            ? "Query your data, manage billing, and message your team."
+            : "Start querying your data in minutes."}
+        </p>
 
         <div className="flex flex-col gap-2">
           <button
@@ -151,7 +185,7 @@ export function LoginScreen() {
             disabled={disabled}
             className="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface-2 py-2.5 text-sm font-medium text-ink transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {pending === "github" ? <IconSpinner className="h-4 w-4" /> : <IconGithub className="h-4 w-4" />}
+            <IconGithub className="h-4 w-4" />
             Continue with GitHub
           </button>
           <button
@@ -160,10 +194,12 @@ export function LoginScreen() {
             disabled={disabled}
             className="flex items-center justify-center gap-2 rounded-lg border border-[#DADCE0] bg-white py-2.5 text-sm font-medium text-[#1F1F1F] transition-colors hover:bg-[#F8F9FA] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {pending === "google" ? <IconSpinner className="h-4 w-4" /> : <IconGoogle className="h-4 w-4" />}
+            <IconGoogle className="h-4 w-4" />
             Continue with Google
           </button>
         </div>
+
+        {notice && <p className="mt-3 text-center text-xs text-ink-3">{notice}</p>}
 
         <div className="my-6 flex items-center gap-3">
           <span className="h-px flex-1 bg-border" />
@@ -172,6 +208,31 @@ export function LoginScreen() {
         </div>
 
         <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
+          {mode === "register" && (
+            <div>
+              <label htmlFor="organizationName" className="mb-1.5 block text-xs font-medium text-ink-2">
+                Organization name
+              </label>
+              <input
+                id="organizationName"
+                type="text"
+                autoComplete="organization"
+                value={organizationName}
+                onChange={(e) => setOrganizationName(e.target.value)}
+                disabled={disabled}
+                aria-invalid={Boolean(errors.organizationName)}
+                aria-describedby={errors.organizationName ? "organizationName-error" : undefined}
+                placeholder="Acme Analytics"
+                className="w-full rounded-lg border border-border-strong bg-bg px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40 disabled:opacity-60"
+              />
+              {errors.organizationName && (
+                <p id="organizationName-error" className="mt-1.5 text-xs text-danger">
+                  {errors.organizationName}
+                </p>
+              )}
+            </div>
+          )}
+
           <div>
             <label htmlFor="email" className="mb-1.5 block text-xs font-medium text-ink-2">
               Email
@@ -200,15 +261,17 @@ export function LoginScreen() {
               <label htmlFor="password" className="block text-xs font-medium text-ink-2">
                 Password
               </label>
-              <button type="button" className="text-xs text-accent hover:text-accent-2">
-                Forgot password?
-              </button>
+              {mode === "login" && (
+                <button type="button" className="text-xs text-accent hover:text-accent-2">
+                  Forgot password?
+                </button>
+              )}
             </div>
             <div className="relative">
               <input
                 id="password"
                 type={showPassword ? "text" : "password"}
-                autoComplete="current-password"
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={disabled}
@@ -239,16 +302,33 @@ export function LoginScreen() {
             disabled={disabled}
             className="mt-1 flex items-center justify-center gap-2 rounded-lg bg-accent py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {pending === "password" && <IconSpinner className="h-4 w-4" />}
-            {pending === "password" ? "Signing in…" : "Sign in"}
+            {pending === "submit" && <IconSpinner className="h-4 w-4" />}
+            {mode === "login"
+              ? pending === "submit"
+                ? "Signing in…"
+                : "Sign in"
+              : pending === "submit"
+                ? "Creating workspace…"
+                : "Create workspace"}
           </button>
         </form>
 
         <p className="mt-6 text-center text-sm text-ink-2">
-          Don&rsquo;t have an account?{" "}
-          <button type="button" className="text-accent hover:text-accent-2">
-            Sign up
-          </button>
+          {mode === "login" ? (
+            <>
+              Don&rsquo;t have an account?{" "}
+              <button type="button" onClick={toggleMode} className="text-accent hover:text-accent-2">
+                Sign up
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{" "}
+              <button type="button" onClick={toggleMode} className="text-accent hover:text-accent-2">
+                Sign in
+              </button>
+            </>
+          )}
         </p>
       </div>
 
@@ -262,6 +342,12 @@ export function LoginScreen() {
 /* ------------------------------- logged out ----------------------------------- */
 
 export function LoggedOutScreen() {
+  const { logout } = useAuth();
+
+  useEffect(() => {
+    void logout();
+  }, [logout]);
+
   return (
     <AuthShell>
       <BrandMark />
@@ -282,8 +368,6 @@ export function LoggedOutScreen() {
         >
           Sign back in
         </Link>
-
-        <p className="mt-4 font-mono text-[11px] text-ink-3">Signed out of Acme Analytics</p>
       </div>
     </AuthShell>
   );

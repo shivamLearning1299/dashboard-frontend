@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, type ReactNode } from "react";
 import { IconCard, IconGrid, IconLogOut, IconMessage, type IconProps } from "@/components/icons";
-
-const WORKSPACE = "Acme Analytics";
-const USER = { name: "Priya Raman", email: "priya@acme.dev", initials: "PR" };
+import { useAuth } from "@/lib/auth/AuthContext";
+import type { CurrentUser } from "@/lib/auth/types";
 
 export type NavKey = "overview" | "payments" | "messages";
 
@@ -20,7 +20,10 @@ const NAV_ITEMS: {
   { key: "messages", label: "Messages", href: "/messages", icon: IconMessage },
 ];
 
-function Sidebar({ active }: { active: NavKey }) {
+function Sidebar({ active, user }: { active: NavKey; user: CurrentUser }) {
+  const workspace = user.organizations[0]?.org.name ?? "Workspace";
+  const initials = user.email.slice(0, 2).toUpperCase();
+
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-surface md:flex">
       <div className="flex items-center gap-2 px-5 py-5">
@@ -51,11 +54,11 @@ function Sidebar({ active }: { active: NavKey }) {
 
       <div className="flex items-center gap-3 border-t border-border px-4 py-4">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 font-mono text-xs font-medium text-accent">
-          {USER.initials}
+          {initials}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-ink">{USER.name}</p>
-          <p className="truncate text-xs text-ink-3">{USER.email}</p>
+          <p className="truncate text-sm text-ink">{user.email}</p>
+          <p className="truncate text-xs text-ink-3">{workspace}</p>
         </div>
         <Link
           href="/logout"
@@ -69,11 +72,19 @@ function Sidebar({ active }: { active: NavKey }) {
   );
 }
 
-function Topbar({ title, headerRight }: { title: string; headerRight?: ReactNode }) {
+function Topbar({
+  title,
+  workspace,
+  headerRight,
+}: {
+  title: string;
+  workspace: string;
+  headerRight?: ReactNode;
+}) {
   return (
     <header className="flex items-center justify-between border-b border-border px-6 py-5 md:px-8">
       <div>
-        <p className="font-mono text-xs uppercase tracking-wide text-ink-3">{WORKSPACE}</p>
+        <p className="font-mono text-xs uppercase tracking-wide text-ink-3">{workspace}</p>
         <h1 className="text-xl font-semibold text-ink">{title}</h1>
       </div>
       <div className="flex items-center gap-3">
@@ -97,11 +108,24 @@ export function AppShell({
   headerRight?: ReactNode;
   children: ReactNode;
 }) {
+  const { status, user } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === "unauthenticated") router.replace("/login");
+  }, [status, router]);
+
+  if (status !== "authenticated" || !user) {
+    return <div className="min-h-screen bg-bg" />;
+  }
+
+  const workspace = user.organizations[0]?.org.name ?? "Workspace";
+
   return (
     <div className="flex min-h-screen bg-bg text-ink">
-      <Sidebar active={active} />
+      <Sidebar active={active} user={user} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar title={title} headerRight={headerRight} />
+        <Topbar title={title} workspace={workspace} headerRight={headerRight} />
         <main className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-6 px-6 py-8 md:px-8">
           {children}
         </main>
