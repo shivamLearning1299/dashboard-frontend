@@ -14,11 +14,10 @@ const NAV_ITEMS: {
   label: string;
   href: string;
   icon: (props: IconProps) => ReactNode;
-  soon?: boolean;
 }[] = [
   { key: "overview", label: "Overview", href: "/", icon: IconGrid },
   { key: "payments", label: "Payments", href: "/payments", icon: IconCard },
-  { key: "messages", label: "Messages", href: "/messages", icon: IconMessage, soon: true },
+  { key: "messages", label: "Messages", href: "/messages", icon: IconMessage },
 ];
 
 function Sidebar({ active }: { active: NavKey }) {
@@ -34,22 +33,6 @@ function Sidebar({ active }: { active: NavKey }) {
       <nav className="flex flex-1 flex-col gap-1 px-3 py-2" aria-label="Primary">
         {NAV_ITEMS.map((item) => {
           const isActive = item.key === active;
-          if (item.soon) {
-            return (
-              <button
-                key={item.key}
-                type="button"
-                className="flex cursor-not-allowed items-center gap-3 rounded-lg px-3 py-2 text-sm text-ink-3"
-                title={`${item.label} — coming soon`}
-              >
-                <item.icon className="h-4 w-4" />
-                <span className="flex-1 text-left">{item.label}</span>
-                <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
-                  Soon
-                </span>
-              </button>
-            );
-          }
           return (
             <Link
               key={item.key}
