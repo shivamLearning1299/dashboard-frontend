@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 /* ---------------------------------- icons ---------------------------------- */
@@ -419,13 +420,13 @@ function Sidebar() {
           <p className="truncate text-sm text-ink">{USER.name}</p>
           <p className="truncate text-xs text-ink-3">{USER.email}</p>
         </div>
-        <button
-          type="button"
+        <Link
+          href="/logout"
           className="rounded-md p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           title="Sign out"
         >
           <IconLogOut className="h-4 w-4" />
-        </button>
+        </Link>
       </div>
     </aside>
   );
