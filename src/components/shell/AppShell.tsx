@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
-import { IconCard, IconGrid, IconLogOut, IconMessage, type IconProps } from "@/components/icons";
+import { IconBox, IconCard, IconGrid, IconLogOut, IconMessage, type IconProps } from "@/components/icons";
 import { useAuth } from "@/lib/auth-context";
 
-export type NavKey = "overview" | "payments" | "messages";
+export type NavKey = "overview" | "payments" | "messages" | "catalog";
 
 const NAV_ITEMS: {
   key: NavKey;
@@ -15,6 +15,7 @@ const NAV_ITEMS: {
   icon: (props: IconProps) => ReactNode;
 }[] = [
   { key: "overview", label: "Overview", href: "/", icon: IconGrid },
+  { key: "catalog", label: "Catalog", href: "/catalog", icon: IconBox },
   { key: "payments", label: "Payments", href: "/payments", icon: IconCard },
   { key: "messages", label: "Messages", href: "/messages", icon: IconMessage },
 ];

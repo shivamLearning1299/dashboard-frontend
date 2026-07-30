@@ -276,3 +276,109 @@ export const queriesApi = {
   recent: () => authedRequest<RecentQuery[]>("/queries/recent"),
   count: () => authedRequest<{ count: number }>("/queries/count"),
 };
+
+/* ---------------------------------- catalog ------------------------------------ */
+
+export interface CatalogSummary {
+  categoryCount: number;
+  productCount: number;
+  totalStockQty: number;
+  lowStockCount: number;
+  inboundPipelineQty: number;
+  outboundPipelineQty: number;
+}
+
+export interface Category {
+  id: string;
+  orgId: string;
+  name: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface Product {
+  id: string;
+  sku: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  stockQty: number;
+  reorderPoint: number;
+  lowStock: boolean;
+  category: { id: string; name: string };
+  inboundPipelineQty: number;
+  outboundPipelineQty: number;
+  updatedAt: string;
+}
+
+export type ShipmentDirection = "INBOUND" | "OUTBOUND";
+export type ShipmentStatus = "PENDING" | "IN_TRANSIT" | "COMPLETED" | "CANCELED";
+
+export interface Shipment {
+  id: string;
+  orgId: string;
+  productId: string;
+  direction: ShipmentDirection;
+  status: ShipmentStatus;
+  quantity: number;
+  reference: string | null;
+  expectedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  product: { id: string; name: string; sku: string };
+}
+
+export const catalogApi = {
+  summary: () => authedRequest<CatalogSummary>("/catalog/summary"),
+  listCategories: () => authedRequest<Category[]>("/catalog/categories"),
+  createCategory: (name: string, description?: string) =>
+    authedRequest<Category>("/catalog/categories", {
+      method: "POST",
+      body: JSON.stringify({ name, description }),
+    }),
+  listProducts: () => authedRequest<Product[]>("/catalog/products"),
+  createProduct: (input: {
+    categoryId: string;
+    sku: string;
+    name: string;
+    description?: string;
+    priceCents: number;
+    stockQty?: number;
+    reorderPoint?: number;
+  }) =>
+    authedRequest<Product>("/catalog/products", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateProduct: (
+    id: string,
+    input: Partial<{
+      categoryId: string;
+      name: string;
+      description: string;
+      priceCents: number;
+      reorderPoint: number;
+    }>
+  ) =>
+    authedRequest<Product>(`/catalog/products/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  listShipments: () => authedRequest<Shipment[]>("/catalog/shipments"),
+  createShipment: (input: {
+    productId: string;
+    direction: ShipmentDirection;
+    quantity: number;
+    reference?: string;
+    expectedAt?: string;
+  }) =>
+    authedRequest<Shipment>("/catalog/shipments", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateShipmentStatus: (id: string, status: Exclude<ShipmentStatus, "PENDING">) =>
+    authedRequest<Shipment>(`/catalog/shipments/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+};

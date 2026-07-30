@@ -98,6 +98,15 @@ export function IconDownload({ className }: IconProps) {
   );
 }
 
+export function IconBox({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
+      <path d="M10 2.5 17 6.2v7.6L10 17.5 3 13.8V6.2L10 2.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M3 6.2 10 10m0 0 7-3.8M10 10v7.5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function IconX({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" className={className} aria-hidden="true">
