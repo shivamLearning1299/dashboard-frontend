@@ -3,6 +3,16 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/shell/AppShell";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { ApiError } from "@/lib/auth/api";
+import {
+  askAi,
+  getChannels,
+  getMessages,
+  sendMessage,
+  type ChannelSummary,
+  type MessageDto,
+} from "@/lib/messaging/api";
 
 /* ---------------------------------- icons ---------------------------------- */
 
@@ -43,154 +53,10 @@ function IconSend({ className }: IconProps) {
   );
 }
 
-/* --------------------------------- mock data -------------------------------- */
+/* -------------------------------- formatting -------------------------------- */
 
-type ConvoMeta = {
-  id: string;
-  kind: "channel" | "dm";
-  name: string;
-  description?: string;
-  memberCount?: number;
-  online?: boolean;
-  initials?: string;
-};
-
-const CHANNELS: ConvoMeta[] = [
-  { id: "general", kind: "channel", name: "general", description: "Company-wide announcements", memberCount: 24 },
-  { id: "product", kind: "channel", name: "product", description: "Product & roadmap discussion", memberCount: 9 },
-  {
-    id: "data-alerts",
-    kind: "channel",
-    name: "data-alerts",
-    description: "Automated alerts from shivecom queries",
-    memberCount: 6,
-  },
-  { id: "incidents", kind: "channel", name: "incidents", description: "Active incident coordination", memberCount: 5 },
-];
-
-const DMS: ConvoMeta[] = [
-  { id: "dm-arjun", kind: "dm", name: "Arjun Mehta", initials: "AM", online: true },
-  { id: "dm-lena", kind: "dm", name: "Lena Ford", initials: "LF", online: false },
-  { id: "dm-sam", kind: "dm", name: "Sam Okafor", initials: "SO", online: true },
-];
-
-const CONVO_LOOKUP: Record<string, ConvoMeta> = Object.fromEntries(
-  [...CHANNELS, ...DMS].map((c) => [c.id, c])
-);
-
-type Author = "me" | "ai" | { name: string; initials: string };
-
-type ChatMessage = {
-  id: string;
-  author: Author;
-  time: string;
-  text: string;
-  aiTag?: "Alert" | "Answer";
-  table?: { caption: string; rows: { label: string; value: string }[] };
-  link?: { label: string; href: string };
-};
-
-function authorKey(a: Author) {
-  return a === "me" || a === "ai" ? a : `human:${a.name}`;
-}
-
-const SEED_MESSAGES: Record<string, ChatMessage[]> = {
-  general: [
-    {
-      id: "g1",
-      author: { name: "Sam Okafor", initials: "SO" },
-      time: "8:41 AM",
-      text: "Welcome to the new shivecom workspace, everyone 👋",
-    },
-    { id: "g2", author: "me", time: "8:52 AM", text: "Excited to get the team on this — data-alerts channel is already useful." },
-  ],
-  product: [
-    { id: "p1", author: { name: "Lena Ford", initials: "LF" }, time: "Yesterday", text: "Scheduled queries shipped to Pro plans today." },
-    { id: "p2", author: { name: "Arjun Mehta", initials: "AM" }, time: "Yesterday", text: "Nice. Docs updated?" },
-    { id: "p3", author: { name: "Lena Ford", initials: "LF" }, time: "Yesterday", text: "Yep, linked in #general." },
-  ],
-  "data-alerts": [
-    {
-      id: "d1",
-      author: "ai",
-      time: "9:02 AM",
-      aiTag: "Alert",
-      text: "Failed payments are up 3× vs last week — 5 failures in the last 24h.",
-    },
-    { id: "d2", author: "me", time: "9:04 AM", text: "Hooli Devices declined again — that's twice this week." },
-    {
-      id: "d3",
-      author: { name: "Arjun Mehta", initials: "AM" },
-      time: "9:05 AM",
-      text: "Yeah, saw that on the dashboard. Can we get a breakdown by reason?",
-    },
-    {
-      id: "d4",
-      author: "ai",
-      time: "9:06 AM",
-      aiTag: "Answer",
-      text: "Here's the breakdown for the last 7 days:",
-      table: {
-        caption: "Failed payments by reason",
-        rows: [
-          { label: "Card declined", value: "3" },
-          { label: "Insufficient funds", value: "1" },
-          { label: "Expired card", value: "1" },
-        ],
-      },
-      link: { label: "View full results in Overview", href: "/" },
-    },
-    { id: "d5", author: "me", time: "9:07 AM", text: "Nice, thanks!" },
-  ],
-  incidents: [],
-  "dm-arjun": [
-    { id: "a1", author: { name: "Arjun Mehta", initials: "AM" }, time: "10:15 AM", text: "Got a sec to look at the APAC numbers?" },
-    { id: "a2", author: "me", time: "10:20 AM", text: "Yep, pulling them up now." },
-    { id: "a3", author: { name: "Arjun Mehta", initials: "AM" }, time: "10:20 AM", text: "🙏" },
-  ],
-  "dm-lena": [],
-  "dm-sam": [
-    { id: "s1", author: { name: "Sam Okafor", initials: "SO" }, time: "Monday", text: "Standup moved to 9:30 this week." },
-    { id: "s2", author: "me", time: "Monday", text: "Got it, thanks for the heads up." },
-  ],
-};
-
-const AI_ANSWERS: { keywords: string[]; text: string; caption: string; rows: { label: string; value: string }[] }[] = [
-  {
-    keywords: ["fail", "declin", "payment"],
-    text: "Here's the breakdown of failed payments over the last 7 days:",
-    caption: "Failed payments by reason",
-    rows: [
-      { label: "Card declined", value: "3" },
-      { label: "Insufficient funds", value: "1" },
-      { label: "Expired card", value: "1" },
-    ],
-  },
-  {
-    keywords: ["customer", "ltv", "lifetime"],
-    text: "Your top customers by lifetime value right now:",
-    caption: "Top customers (LTV)",
-    rows: [
-      { label: "Northwind Traders", value: "$84,200" },
-      { label: "Globex Retail", value: "$71,950" },
-      { label: "Initech Labs", value: "$52,300" },
-    ],
-  },
-  {
-    keywords: ["revenue", "region", "mrr"],
-    text: "Revenue by region over the last 3 months:",
-    caption: "Revenue by region (USD)",
-    rows: [
-      { label: "NA", value: "$426,500" },
-      { label: "EMEA", value: "$304,400" },
-      { label: "APAC", value: "$205,000" },
-    ],
-  },
-];
-
-function findAiAnswer(question: string) {
-  const q = question.toLowerCase();
-  return AI_ANSWERS.find((a) => a.keywords.some((k) => q.includes(k))) ?? AI_ANSWERS[2];
+function formatMessageTime(iso: string) {
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 const AI_SUGGESTIONS = ["Revenue by region", "Failed payments this week", "Top customers by LTV"];
@@ -216,17 +82,19 @@ function MiniTable({ caption, rows }: { caption: string; rows: { label: string; 
 }
 
 function ConvoRail({
+  channels,
+  directMessages,
   active,
-  unread,
   onSelect,
 }: {
-  active: string;
-  unread: Record<string, number>;
+  channels: ChannelSummary[];
+  directMessages: ChannelSummary[];
+  active: string | null;
   onSelect: (id: string) => void;
 }) {
-  function Row({ convo }: { convo: ConvoMeta }) {
+  function Row({ convo }: { convo: ChannelSummary }) {
     const isActive = convo.id === active;
-    const count = unread[convo.id] ?? 0;
+    const count = convo.unreadCount;
     return (
       <button
         type="button"
@@ -235,16 +103,11 @@ function ConvoRail({
           isActive ? "bg-surface-2 text-ink" : count > 0 ? "text-ink" : "text-ink-2 hover:text-ink"
         }`}
       >
-        {convo.kind === "channel" ? (
+        {convo.kind === "CHANNEL" ? (
           <IconHash className="h-3.5 w-3.5 shrink-0 text-ink-3" />
         ) : (
-          <span className="relative flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 font-mono text-[10px] font-medium text-accent">
-            {convo.initials}
-            <span
-              className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-2 ring-surface ${
-                convo.online ? "bg-success" : "bg-ink-3"
-              }`}
-            />
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 font-mono text-[10px] font-medium text-accent">
+            {convo.name.slice(0, 2).toUpperCase()}
           </span>
         )}
         <span className={`flex-1 truncate ${count > 0 ? "font-medium" : ""}`}>{convo.name}</span>
@@ -272,67 +135,77 @@ function ConvoRail({
       <div className="flex-1 overflow-y-auto p-2">
         <p className="px-2.5 pb-1 pt-2 font-mono text-[11px] uppercase tracking-wide text-ink-3">Channels</p>
         <div className="flex flex-col gap-0.5">
-          {CHANNELS.map((c) => (
+          {channels.map((c) => (
             <Row key={c.id} convo={c} />
           ))}
         </div>
         <p className="px-2.5 pb-1 pt-4 font-mono text-[11px] uppercase tracking-wide text-ink-3">Direct messages</p>
-        <div className="flex flex-col gap-0.5">
-          {DMS.map((c) => (
-            <Row key={c.id} convo={c} />
-          ))}
-        </div>
+        {directMessages.length === 0 ? (
+          <p className="px-2.5 py-1 text-xs text-ink-3">Invite your team to start DMs.</p>
+        ) : (
+          <div className="flex flex-col gap-0.5">
+            {directMessages.map((c) => (
+              <Row key={c.id} convo={c} />
+            ))}
+          </div>
+        )}
       </div>
     </aside>
   );
 }
 
-function ConvoHeader({ convo }: { convo: ConvoMeta }) {
+function ConvoHeader({ convo }: { convo: ChannelSummary }) {
   return (
     <div className="flex items-center gap-2 border-b border-border px-5 py-3.5">
-      {convo.kind === "channel" ? (
+      {convo.kind === "CHANNEL" ? (
         <IconHash className="h-4 w-4 text-ink-3" />
       ) : (
-        <span className="relative flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 font-mono text-[11px] font-medium text-accent">
-          {convo.initials}
-          <span
-            className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-surface ${
-              convo.online ? "bg-success" : "bg-ink-3"
-            }`}
-          />
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 font-mono text-[11px] font-medium text-accent">
+          {convo.name.slice(0, 2).toUpperCase()}
         </span>
       )}
       <div className="min-w-0">
         <p className="truncate text-sm font-semibold text-ink">{convo.name}</p>
-        <p className="truncate text-xs text-ink-3">
-          {convo.kind === "channel" ? `${convo.description} · ${convo.memberCount} members` : convo.online ? "Online" : "Away"}
-        </p>
+        {convo.description && <p className="truncate text-xs text-ink-3">{convo.description}</p>}
       </div>
     </div>
   );
 }
 
-function MessageRow({ message, grouped }: { message: ChatMessage; grouped: boolean }) {
-  const isAi = message.author === "ai";
-  const isMe = message.author === "me";
-  const displayName = isAi ? "shivecom AI" : isMe ? "Priya Raman" : message.author !== "ai" && message.author !== "me" ? message.author.name : "";
-  const initials = isAi ? null : isMe ? "PR" : message.author !== "ai" && message.author !== "me" ? message.author.initials : "";
+function MessageRow({
+  message,
+  grouped,
+  currentUserEmail,
+}: {
+  message: MessageDto;
+  grouped: boolean;
+  currentUserEmail: string;
+}) {
+  const isAi = message.senderType === "AI";
+  const isMe = message.senderType === "USER" && message.senderEmail === currentUserEmail;
+  const displayName = isAi ? "shivecom AI" : isMe ? "You" : (message.senderEmail?.split("@")[0] ?? "Someone");
+  const initials = isAi ? null : (message.senderEmail ?? "??").slice(0, 2).toUpperCase();
+  const showResultLink = isAi && message.aiTag === "Answer";
+
+  const body = (
+    <>
+      {message.text}
+      {message.resultJson && <MiniTable caption={message.resultJson.caption} rows={message.resultJson.rows} />}
+      {showResultLink && (
+        <Link href="/" className="mt-1.5 block text-xs text-accent hover:text-accent-2">
+          View full results in Overview →
+        </Link>
+      )}
+    </>
+  );
 
   if (grouped) {
     return (
       <div className={`group flex gap-3 rounded-lg px-2 py-0.5 hover:bg-surface-2/50 ${isAi ? "bg-accent/5 hover:bg-accent/5" : ""}`}>
         <span className="w-7 shrink-0 text-right font-mono text-[10px] text-ink-3 opacity-0 group-hover:opacity-100">
-          {message.time}
+          {formatMessageTime(message.createdAt)}
         </span>
-        <div className="min-w-0 flex-1 text-sm text-ink-2">
-          {message.text}
-          {message.table && <MiniTable caption={message.table.caption} rows={message.table.rows} />}
-          {message.link && (
-            <Link href={message.link.href} className="mt-1.5 block text-xs text-accent hover:text-accent-2">
-              {message.link.label} →
-            </Link>
-          )}
-        </div>
+        <div className="min-w-0 flex-1 text-sm text-ink-2">{body}</div>
       </div>
     );
   }
@@ -360,17 +233,9 @@ function MessageRow({ message, grouped }: { message: ChatMessage; grouped: boole
               {message.aiTag}
             </span>
           )}
-          <span className="font-mono text-[10px] text-ink-3">{message.time}</span>
+          <span className="font-mono text-[10px] text-ink-3">{formatMessageTime(message.createdAt)}</span>
         </div>
-        <div className="mt-0.5 text-sm text-ink-2">
-          {message.text}
-          {message.table && <MiniTable caption={message.table.caption} rows={message.table.rows} />}
-          {message.link && (
-            <Link href={message.link.href} className="mt-1.5 block text-xs text-accent hover:text-accent-2">
-              {message.link.label} →
-            </Link>
-          )}
-        </div>
+        <div className="mt-0.5 text-sm text-ink-2">{body}</div>
       </div>
     </div>
   );
@@ -405,7 +270,7 @@ function Composer({
   onSend,
   disabled,
 }: {
-  convo: ConvoMeta;
+  convo: ChannelSummary;
   mode: "message" | "ai";
   onModeChange: (m: "message" | "ai") => void;
   draft: string;
@@ -452,7 +317,7 @@ function Composer({
           placeholder={
             mode === "ai"
               ? "Ask AI about your revenue, customers, or data…"
-              : `Message ${convo.kind === "channel" ? `#${convo.name}` : convo.name}`
+              : `Message ${convo.kind === "CHANNEL" ? `#${convo.name}` : convo.name}`
           }
           className="max-h-32 flex-1 resize-none rounded-lg border border-border-strong bg-bg px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40 disabled:opacity-60"
         />
@@ -489,77 +354,138 @@ function Composer({
 /* --------------------------------- page root --------------------------------- */
 
 export default function MessagingDashboard() {
-  const [active, setActive] = useState("data-alerts");
-  const [messages, setMessages] = useState(SEED_MESSAGES);
-  const [unread, setUnread] = useState<Record<string, number>>({ product: 2, "dm-lena": 1 });
+  const { apiFetch, user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [channels, setChannels] = useState<ChannelSummary[]>([]);
+  const [directMessages, setDirectMessages] = useState<ChannelSummary[]>([]);
+  const [active, setActive] = useState<string | null>(null);
+
+  const [messages, setMessages] = useState<MessageDto[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [mode, setMode] = useState<"message" | "ai">("message");
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const convo = CONVO_LOOKUP[active];
-  const thread = messages[active] ?? [];
+  const allConvos = [...channels, ...directMessages];
+  const convo = allConvos.find((c) => c.id === active) ?? null;
+
+  useEffect(() => {
+    getChannels(apiFetch)
+      .then((res) => {
+        setChannels(res.channels);
+        setDirectMessages(res.directMessages);
+        const dataAlerts = res.channels.find((c) => c.name === "data-alerts");
+        setActive(dataAlerts?.id ?? res.channels[0]?.id ?? res.directMessages[0]?.id ?? null);
+      })
+      .catch(() => setLoadError("Couldn't load your channels. Try refreshing the page."))
+      .finally(() => setLoading(false));
+  }, [apiFetch]);
+
+  useEffect(() => {
+    if (!active) return;
+    // setMessagesLoading below runs inside a .then() continuation, not
+    // synchronously in the effect body — this reacts to the channel
+    // selection changing, it isn't a derived-state calculation.
+    Promise.resolve().then(() => {
+      setMessagesLoading(true);
+      return getMessages(apiFetch, active)
+        .then((msgs) => {
+          setMessages(msgs);
+          // optimistic local clear — the server already marked it read via this same call
+          setChannels((prev) => prev.map((c) => (c.id === active ? { ...c, unreadCount: 0 } : c)));
+          setDirectMessages((prev) => prev.map((c) => (c.id === active ? { ...c, unreadCount: 0 } : c)));
+        })
+        .finally(() => setMessagesLoading(false));
+    });
+  }, [apiFetch, active]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [thread.length, thinking, active]);
+  }, [messages.length, thinking, active]);
 
-  function selectConvo(id: string) {
-    setActive(id);
-    setUnread((prev) => ({ ...prev, [id]: 0 }));
-  }
-
-  function appendMessage(id: string, message: ChatMessage) {
-    setMessages((prev) => ({ ...prev, [id]: [...(prev[id] ?? []), message] }));
-  }
-
-  function handleSend() {
+  async function handleSend() {
     const text = draft.trim();
-    if (!text) return;
+    if (!active || !text) return;
     setDraft("");
+    setSendError(null);
 
     if (mode === "message") {
-      appendMessage(active, { id: crypto.randomUUID(), author: "me", time: "Just now", text });
+      try {
+        const message = await sendMessage(apiFetch, active, text);
+        setMessages((prev) => [...prev, message]);
+      } catch (err) {
+        setSendError(err instanceof ApiError ? err.message : "Couldn't send that message.");
+      }
       return;
     }
 
-    appendMessage(active, { id: crypto.randomUUID(), author: "me", time: "Just now", text });
     setThinking(true);
-    window.setTimeout(() => {
-      const answer = findAiAnswer(text);
-      appendMessage(active, {
-        id: crypto.randomUUID(),
-        author: "ai",
-        time: "Just now",
-        aiTag: "Answer",
-        text: answer.text,
-        table: { caption: answer.caption, rows: answer.rows },
-        link: { label: "View full results in Overview", href: "/" },
-      });
+    try {
+      const { userMessage, aiMessage } = await askAi(apiFetch, active, text);
+      setMessages((prev) => [...prev, userMessage, aiMessage]);
+    } catch (err) {
+      setSendError(err instanceof ApiError ? err.message : "Couldn't reach the AI.");
+    } finally {
       setThinking(false);
-    }, 900);
+    }
+  }
+
+  if (loading) {
+    return (
+      <AppShell active="messages" title="Messages">
+        <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Loading channels…</div>
+      </AppShell>
+    );
+  }
+
+  if (loadError || !convo) {
+    return (
+      <AppShell active="messages" title="Messages">
+        <div className="flex flex-1 items-center justify-center text-sm text-danger">
+          {loadError ?? "No channels available."}
+        </div>
+      </AppShell>
+    );
   }
 
   return (
     <AppShell active="messages" title="Messages">
       <div className="flex min-h-0 flex-1 gap-4">
-        <ConvoRail active={active} unread={unread} onSelect={selectConvo} />
+        <ConvoRail
+          channels={channels}
+          directMessages={directMessages}
+          active={active}
+          onSelect={setActive}
+        />
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface">
           <ConvoHeader convo={convo} />
 
           <div ref={scrollRef} className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-4 py-4">
-            {thread.length === 0 && !thinking ? (
+            {messagesLoading ? (
+              <p className="text-sm text-ink-3">Loading messages…</p>
+            ) : messages.length === 0 && !thinking ? (
               <EmptyConvo />
             ) : (
-              thread.map((m, i) => {
-                const prev = thread[i - 1];
-                const grouped = Boolean(prev) && authorKey(prev.author) === authorKey(m.author) && !m.aiTag;
-                return <MessageRow key={m.id} message={m} grouped={grouped} />;
+              messages.map((m, i) => {
+                const prev = messages[i - 1];
+                const grouped =
+                  Boolean(prev) &&
+                  prev.senderType === m.senderType &&
+                  prev.senderEmail === m.senderEmail &&
+                  !m.aiTag;
+                return (
+                  <MessageRow key={m.id} message={m} grouped={grouped} currentUserEmail={user?.email ?? ""} />
+                );
               })
             )}
             {thinking && <ThinkingRow />}
           </div>
+
+          {sendError && <p className="px-4 text-sm text-danger">{sendError}</p>}
 
           <Composer
             convo={convo}
@@ -567,7 +493,7 @@ export default function MessagingDashboard() {
             onModeChange={setMode}
             draft={draft}
             onDraftChange={setDraft}
-            onSend={handleSend}
+            onSend={() => void handleSend()}
             disabled={thinking}
           />
         </div>

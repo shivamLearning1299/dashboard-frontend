@@ -1,104 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/AppShell";
 import { IconCard, IconCheck, IconDownload, IconX } from "@/components/icons";
-
-/* --------------------------------- mock data -------------------------------- */
-
-type PlanId = "starter" | "pro" | "business" | "enterprise";
-
-const TIER_ORDER: PlanId[] = ["starter", "pro", "business", "enterprise"];
-
-type Plan = {
-  id: PlanId;
-  name: string;
-  monthly: number | null;
-  annual: number | null;
-  description: string;
-  features: string[];
-};
-
-const PLANS: Plan[] = [
-  {
-    id: "starter",
-    name: "Starter",
-    monthly: 0,
-    annual: 0,
-    description: "For solo builders trying shivecom out.",
-    features: ["500 AI queries / month", "1 connected data source", "Community support", "7-day query history"],
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    monthly: 49,
-    annual: 39,
-    description: "For small teams shipping on real data.",
-    features: [
-      "10,000 AI queries / month",
-      "5 connected data sources",
-      "Team messaging",
-      "Priority email support",
-      "Saved & scheduled queries",
-    ],
-  },
-  {
-    id: "business",
-    name: "Business",
-    monthly: 199,
-    annual: 159,
-    description: "For growing teams with compliance needs.",
-    features: [
-      "50,000 AI queries / month",
-      "Unlimited data sources",
-      "SSO & audit logs",
-      "Dedicated Slack channel",
-      "99.9% uptime SLA",
-    ],
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    monthly: null,
-    annual: null,
-    description: "For large orgs with custom requirements.",
-    features: [
-      "Unlimited AI queries",
-      "Custom data residency",
-      "Dedicated infrastructure",
-      "Custom SLA & onboarding",
-    ],
-  },
-];
-
-const PLAN_LOOKUP: Record<PlanId, Plan> = Object.fromEntries(PLANS.map((p) => [p.id, p])) as Record<PlanId, Plan>;
-
-const PAYMENT_METHOD = { brand: "Visa", last4: "4242", expiry: "09/27" };
-
-type InvoiceStatus = "paid" | "failed" | "refunded";
-
-type Invoice = {
-  id: string;
-  date: string;
-  description: string;
-  amount: number;
-  status: InvoiceStatus;
-};
-
-const INVOICES: Invoice[] = [
-  { id: "INV-2091", date: "Jul 14, 2026", description: "Pro plan · Jul 14 – Aug 14", amount: 49, status: "paid" },
-  { id: "INV-2077", date: "Jun 14, 2026", description: "Pro plan · Jun 14 – Jul 14", amount: 49, status: "paid" },
-  { id: "INV-2054", date: "May 14, 2026", description: "Pro plan · May 14 – Jun 14", amount: 49, status: "paid" },
-  { id: "INV-2033", date: "Apr 14, 2026", description: "Pro plan · Apr 14 – May 14", amount: 49, status: "failed" },
-  { id: "INV-2033-R", date: "Apr 16, 2026", description: "Pro plan · Apr 14 – May 14 (retry)", amount: 49, status: "paid" },
-  { id: "INV-2011", date: "Mar 14, 2026", description: "Starter → Pro, prorated upgrade", amount: 18, status: "paid" },
-];
-
-const INVOICE_STATUS_STYLE: Record<InvoiceStatus, string> = {
-  paid: "border-success/30 bg-success/10 text-success",
-  failed: "border-danger/30 bg-danger/10 text-danger",
-  refunded: "border-border-strong bg-surface-2 text-ink-2",
-};
+import { useAuth } from "@/lib/auth/AuthContext";
+import {
+  cancelSubscription,
+  changePlan,
+  getInvoices,
+  getPlans,
+  getSubscription,
+  resumeSubscription,
+  type BillingCycle,
+  type Invoice,
+  type Plan,
+  type Subscription,
+} from "@/lib/billing/api";
 
 /* -------------------------------- formatting -------------------------------- */
 
@@ -106,25 +23,35 @@ function formatUsd(n: number) {
   return `$${n.toLocaleString("en-US")}`;
 }
 
-function tierIndex(id: PlanId) {
-  return TIER_ORDER.indexOf(id);
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
+
+const INVOICE_STATUS_STYLE: Record<Invoice["status"], string> = {
+  PAID: "border-success/30 bg-success/10 text-success",
+  FAILED: "border-danger/30 bg-danger/10 text-danger",
+  REFUNDED: "border-border-strong bg-surface-2 text-ink-2",
+};
 
 /* --------------------------------- dialog ------------------------------------ */
 
 type DialogState =
   | { kind: "none" }
-  | { kind: "change"; plan: Plan; direction: "upgrade" | "downgrade" }
+  | { kind: "change"; plan: Plan; direction: "upgrade" | "downgrade"; billingCycle: BillingCycle }
   | { kind: "cancel" };
 
 function ConfirmDialog({
   state,
+  currentPlanName,
   renewsOn,
+  pending,
   onClose,
   onConfirm,
 }: {
   state: DialogState;
+  currentPlanName: string;
   renewsOn: string;
+  pending: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -134,17 +61,19 @@ function ConfirmDialog({
   const isUpgrade = state.kind === "change" && state.direction === "upgrade";
 
   const title = isCancel
-    ? "Cancel your Pro plan?"
+    ? `Cancel your ${currentPlanName} plan?`
     : state.kind === "change"
       ? `${state.direction === "upgrade" ? "Upgrade" : "Downgrade"} to ${state.plan.name}?`
       : "";
 
   const body = isCancel
-    ? `Your workspace keeps Pro access until ${renewsOn}, then moves to Starter. You can resume anytime before then.`
+    ? `Your workspace keeps ${currentPlanName} access until ${renewsOn}. You can resume anytime before then.`
     : state.kind === "change"
       ? isUpgrade
         ? `You'll be charged a prorated amount today, then ${
-            state.plan.monthly !== null ? `${formatUsd(state.plan.monthly)}/mo` : "your custom rate"
+            state.plan.monthlyPrice !== null
+              ? `${formatUsd(state.billingCycle === "ANNUAL" ? state.plan.annualPrice ?? 0 : state.plan.monthlyPrice)}/mo`
+              : "your custom rate"
           } going forward.`
         : `Your plan changes at the end of the current billing cycle on ${renewsOn}. No refund is issued for the current period.`
       : "";
@@ -171,18 +100,20 @@ function ConfirmDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium text-ink-2 hover:text-ink"
+            disabled={pending}
+            className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium text-ink-2 hover:text-ink disabled:opacity-50"
           >
             Never mind
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className={`rounded-lg px-3.5 py-2 text-sm font-medium text-white transition-colors ${
+            disabled={pending}
+            className={`rounded-lg px-3.5 py-2 text-sm font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
               isCancel ? "bg-danger hover:bg-danger/85" : "bg-accent hover:bg-accent-2"
             }`}
           >
-            {isCancel ? "Confirm cancellation" : isUpgrade ? "Confirm upgrade" : "Confirm downgrade"}
+            {pending ? "Working…" : isCancel ? "Confirm cancellation" : isUpgrade ? "Confirm upgrade" : "Confirm downgrade"}
           </button>
         </div>
       </div>
@@ -193,24 +124,24 @@ function ConfirmDialog({
 /* --------------------------------- sections ----------------------------------- */
 
 function CurrentPlanCard({
-  currentPlan,
-  status,
-  renewsOn,
+  subscription,
   onCancel,
   onResume,
 }: {
-  currentPlan: Plan;
-  status: "active" | "canceling";
-  renewsOn: string;
+  subscription: Subscription;
   onCancel: () => void;
   onResume: () => void;
 }) {
+  const active = subscription.status === "ACTIVE";
+  const renewsOn = formatDate(subscription.currentPeriodEnd);
+  const price = subscription.billingCycle === "ANNUAL" ? subscription.annualPrice : subscription.monthlyPrice;
+
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
       <p className="font-mono text-xs uppercase tracking-wide text-ink-3">Current plan</p>
       <div className="flex items-center gap-2">
-        <span className="text-2xl font-semibold text-ink">{currentPlan.name}</span>
-        {status === "active" ? (
+        <span className="text-2xl font-semibold text-ink">{subscription.planName}</span>
+        {active ? (
           <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
             Active
           </span>
@@ -221,10 +152,9 @@ function CurrentPlanCard({
         )}
       </div>
       <p className="text-sm text-ink-2">
-        {currentPlan.monthly !== null ? `${formatUsd(currentPlan.monthly)}/mo` : "Custom pricing"} ·{" "}
-        {status === "active" ? `renews ${renewsOn}` : `ends ${renewsOn}`}
+        {price !== null ? `${formatUsd(price)}/mo` : "Custom pricing"} · {active ? `renews ${renewsOn}` : `ends ${renewsOn}`}
       </p>
-      {status === "active" ? (
+      {active ? (
         <button type="button" onClick={onCancel} className="mt-1 self-start text-sm text-ink-3 hover:text-danger">
           Cancel plan
         </button>
@@ -246,10 +176,8 @@ function PaymentMethodCard() {
           <IconCard className="h-4 w-4" />
         </span>
         <div>
-          <p className="text-sm font-medium text-ink">
-            {PAYMENT_METHOD.brand} •••• {PAYMENT_METHOD.last4}
-          </p>
-          <p className="font-mono text-xs text-ink-3">Expires {PAYMENT_METHOD.expiry}</p>
+          <p className="text-sm font-medium text-ink">Visa •••• 4242</p>
+          <p className="font-mono text-xs text-ink-3">Expires 09/27</p>
         </div>
       </div>
       <button type="button" className="mt-1 self-start text-sm text-accent hover:text-accent-2">
@@ -259,17 +187,16 @@ function PaymentMethodCard() {
   );
 }
 
-function NextInvoiceCard({ currentPlan, renewsOn }: { currentPlan: Plan; renewsOn: string }) {
+function NextInvoiceCard({ subscription, billedTo }: { subscription: Subscription; billedTo: string }) {
+  const price = subscription.billingCycle === "ANNUAL" ? subscription.annualPrice : subscription.monthlyPrice;
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
       <p className="font-mono text-xs uppercase tracking-wide text-ink-3">Next invoice</p>
       <div className="flex items-baseline gap-1.5">
-        <span className="font-mono text-2xl tabular-nums text-ink">
-          {currentPlan.monthly !== null ? formatUsd(currentPlan.monthly) : "—"}
-        </span>
-        <span className="text-sm text-ink-3">due {renewsOn}</span>
+        <span className="font-mono text-2xl tabular-nums text-ink">{price !== null ? formatUsd(price) : "—"}</span>
+        <span className="text-sm text-ink-3">due {formatDate(subscription.currentPeriodEnd)}</span>
       </div>
-      <p className="text-sm text-ink-2">Billed to priya@acme.dev</p>
+      <p className="text-sm text-ink-2">Billed to {billedTo}</p>
     </div>
   );
 }
@@ -305,18 +232,18 @@ function BillingCycleToggle({ annual, onChange }: { annual: boolean; onChange: (
 function PlanCard({
   plan,
   annual,
-  currentPlanId,
+  currentPlan,
   onSelect,
 }: {
   plan: Plan;
   annual: boolean;
-  currentPlanId: PlanId;
+  currentPlan: Plan;
   onSelect: (plan: Plan, direction: "upgrade" | "downgrade") => void;
 }) {
-  const isCurrent = plan.id === currentPlanId;
-  const isPopular = !isCurrent && plan.id === "pro";
-  const diff = tierIndex(plan.id) - tierIndex(currentPlanId);
-  const price = annual ? plan.annual : plan.monthly;
+  const isCurrent = plan.key === currentPlan.key;
+  const isPopular = !isCurrent && plan.key === "pro";
+  const price = annual ? plan.annualPrice : plan.monthlyPrice;
+  const isUpgrade = plan.sortOrder > currentPlan.sortOrder;
 
   return (
     <div
@@ -364,7 +291,7 @@ function PlanCard({
         ))}
       </ul>
 
-      {plan.id === "enterprise" ? (
+      {plan.key === "enterprise" ? (
         <a
           href="mailto:sales@shivecom.dev?subject=Enterprise%20plan"
           className="rounded-lg border border-border py-2 text-center text-sm font-medium text-ink transition-colors hover:border-border-strong"
@@ -379,7 +306,7 @@ function PlanCard({
         >
           Current plan
         </button>
-      ) : diff > 0 ? (
+      ) : isUpgrade ? (
         <button
           type="button"
           onClick={() => onSelect(plan, "upgrade")}
@@ -400,7 +327,7 @@ function PlanCard({
   );
 }
 
-function BillingHistory() {
+function BillingHistory({ invoices }: { invoices: Invoice[] }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
       <div className="border-b border-border px-5 py-4">
@@ -428,29 +355,37 @@ function BillingHistory() {
             </tr>
           </thead>
           <tbody>
-            {INVOICES.map((inv) => (
-              <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-surface-2/60">
-                <td className="px-5 py-2.5 text-ink-2">{inv.date}</td>
-                <td className="px-5 py-2.5 text-ink-2">{inv.description}</td>
-                <td className="px-5 py-2.5 text-right font-mono tabular-nums text-ink">{formatUsd(inv.amount)}</td>
-                <td className="px-5 py-2.5">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${INVOICE_STATUS_STYLE[inv.status]}`}
-                  >
-                    {inv.status}
-                  </span>
-                </td>
-                <td className="px-5 py-2.5 text-right">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1.5 rounded-md p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink"
-                    title={`Download ${inv.id}.pdf`}
-                  >
-                    <IconDownload className="h-4 w-4" />
-                  </button>
+            {invoices.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-8 text-center text-sm text-ink-3">
+                  No invoices yet.
                 </td>
               </tr>
-            ))}
+            ) : (
+              invoices.map((inv) => (
+                <tr key={inv.id} className="border-b border-border last:border-0 hover:bg-surface-2/60">
+                  <td className="px-5 py-2.5 text-ink-2">{formatDate(inv.issuedAt)}</td>
+                  <td className="px-5 py-2.5 text-ink-2">{inv.description}</td>
+                  <td className="px-5 py-2.5 text-right font-mono tabular-nums text-ink">{formatUsd(inv.amount)}</td>
+                  <td className="px-5 py-2.5">
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${INVOICE_STATUS_STYLE[inv.status]}`}
+                    >
+                      {inv.status.toLowerCase()}
+                    </span>
+                  </td>
+                  <td className="px-5 py-2.5 text-right">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-md p-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink"
+                      title={`Download invoice ${inv.id}`}
+                    >
+                      <IconDownload className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -458,14 +393,18 @@ function BillingHistory() {
   );
 }
 
-function Banner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+function Banner({ tone, message, onDismiss }: { tone: "success" | "danger"; message: string; onDismiss: () => void }) {
+  const toneClasses =
+    tone === "success"
+      ? "border-success/30 bg-success/10 text-success"
+      : "border-danger/30 bg-danger/10 text-danger";
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
+    <div className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${toneClasses}`}>
       <div className="flex items-center gap-2">
         <IconCheck className="h-4 w-4" />
         {message}
       </div>
-      <button type="button" onClick={onDismiss} className="text-success/70 hover:text-success">
+      <button type="button" onClick={onDismiss} className="opacity-70 hover:opacity-100">
         <IconX className="h-4 w-4" />
       </button>
     </div>
@@ -474,46 +413,97 @@ function Banner({ message, onDismiss }: { message: string; onDismiss: () => void
 
 /* --------------------------------- page root --------------------------------- */
 
-const RENEWS_ON = "Aug 14, 2026";
-
 export default function PaymentsDashboard() {
-  const [currentPlanId, setCurrentPlanId] = useState<PlanId>("pro");
-  const [status, setStatus] = useState<"active" | "canceling">("active");
+  const { apiFetch, user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [annual, setAnnual] = useState(false);
   const [dialog, setDialog] = useState<DialogState>({ kind: "none" });
-  const [banner, setBanner] = useState<string | null>(null);
+  const [dialogPending, setDialogPending] = useState(false);
+  const [banner, setBanner] = useState<{ tone: "success" | "danger"; message: string } | null>(null);
 
-  const currentPlan = PLAN_LOOKUP[currentPlanId];
+  useEffect(() => {
+    Promise.all([getPlans(apiFetch), getSubscription(apiFetch), getInvoices(apiFetch)])
+      .then(([plansRes, subRes, invoicesRes]) => {
+        setPlans(plansRes);
+        setSubscription(subRes);
+        setInvoices(invoicesRes);
+        setAnnual(subRes.billingCycle === "ANNUAL");
+      })
+      .catch(() => setLoadError("Couldn't load billing information. Try refreshing the page."))
+      .finally(() => setLoading(false));
+  }, [apiFetch]);
 
   function closeDialog() {
+    if (dialogPending) return;
     setDialog({ kind: "none" });
   }
 
-  function confirmDialog() {
-    if (dialog.kind === "change") {
-      setCurrentPlanId(dialog.plan.id);
-      setStatus("active");
-      setBanner(`You're now on the ${dialog.plan.name} plan. Changes apply immediately.`);
-    } else if (dialog.kind === "cancel") {
-      setStatus("canceling");
+  async function confirmDialog() {
+    setDialogPending(true);
+    try {
+      if (dialog.kind === "change") {
+        const updated = await changePlan(apiFetch, dialog.plan.key as "starter" | "pro" | "business", dialog.billingCycle);
+        setSubscription(updated);
+        setBanner({
+          tone: "success",
+          message: `You're now on the ${dialog.plan.name} plan. Changes apply immediately.`,
+        });
+        setInvoices(await getInvoices(apiFetch));
+      } else if (dialog.kind === "cancel") {
+        setSubscription(await cancelSubscription(apiFetch));
+      }
+      setDialog({ kind: "none" });
+    } catch {
+      setBanner({ tone: "danger", message: "That didn't go through. Please try again." });
+    } finally {
+      setDialogPending(false);
     }
-    closeDialog();
+  }
+
+  async function handleResume() {
+    try {
+      setSubscription(await resumeSubscription(apiFetch));
+    } catch {
+      setBanner({ tone: "danger", message: "Couldn't resume your plan. Please try again." });
+    }
+  }
+
+  if (loading) {
+    return (
+      <AppShell active="payments" title="Payments">
+        <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Loading billing…</div>
+      </AppShell>
+    );
+  }
+
+  const currentPlan = plans.find((p) => p.key === subscription?.planKey);
+
+  if (loadError || !subscription || !currentPlan) {
+    return (
+      <AppShell active="payments" title="Payments">
+        <div className="flex flex-1 items-center justify-center text-sm text-danger">
+          {loadError ?? "No billing information available."}
+        </div>
+      </AppShell>
+    );
   }
 
   return (
     <AppShell active="payments" title="Payments">
-      {banner && <Banner message={banner} onDismiss={() => setBanner(null)} />}
+      {banner && <Banner tone={banner.tone} message={banner.message} onDismiss={() => setBanner(null)} />}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <CurrentPlanCard
-          currentPlan={currentPlan}
-          status={status}
-          renewsOn={RENEWS_ON}
+          subscription={subscription}
           onCancel={() => setDialog({ kind: "cancel" })}
-          onResume={() => setStatus("active")}
+          onResume={handleResume}
         />
         <PaymentMethodCard />
-        <NextInvoiceCard currentPlan={currentPlan} renewsOn={RENEWS_ON} />
+        <NextInvoiceCard subscription={subscription} billedTo={user?.email ?? ""} />
       </div>
 
       <div className="flex flex-col gap-4">
@@ -526,21 +516,30 @@ export default function PaymentsDashboard() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {PLANS.map((plan) => (
+          {plans.map((plan) => (
             <PlanCard
-              key={plan.id}
+              key={plan.key}
               plan={plan}
               annual={annual}
-              currentPlanId={currentPlanId}
-              onSelect={(p, direction) => setDialog({ kind: "change", plan: p, direction })}
+              currentPlan={currentPlan}
+              onSelect={(p, direction) =>
+                setDialog({ kind: "change", plan: p, direction, billingCycle: annual ? "ANNUAL" : "MONTHLY" })
+              }
             />
           ))}
         </div>
       </div>
 
-      <BillingHistory />
+      <BillingHistory invoices={invoices} />
 
-      <ConfirmDialog state={dialog} renewsOn={RENEWS_ON} onClose={closeDialog} onConfirm={confirmDialog} />
+      <ConfirmDialog
+        state={dialog}
+        currentPlanName={subscription.planName}
+        renewsOn={formatDate(subscription.currentPeriodEnd)}
+        pending={dialogPending}
+        onClose={closeDialog}
+        onConfirm={confirmDialog}
+      />
     </AppShell>
   );
 }

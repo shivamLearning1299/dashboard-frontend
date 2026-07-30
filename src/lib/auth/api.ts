@@ -1,14 +1,9 @@
+import { ApiError } from "../api/errors";
 import type { AuthTokens, CurrentUser } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
-export class ApiError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+export { ApiError };
 
 async function parseErrorMessage(res: Response): Promise<string> {
   try {

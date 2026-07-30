@@ -1,14 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/shell/AppShell";
+import { IconChevron, IconPlus, IconWarning, type IconProps } from "@/components/icons";
+import { useAuth } from "@/lib/auth/AuthContext";
+import { getSubscription, type Subscription } from "@/lib/billing/api";
+import { ApiError } from "@/lib/auth/api";
 import {
-  IconChevron,
-  IconPlus,
-  IconWarning,
-  type IconProps,
-} from "@/components/icons";
+  askQuery,
+  getQueryCount,
+  getRecentQueries,
+  type QueryResult,
+  type RecentQuery,
+} from "@/lib/queries/api";
 
 /* ------------------------------ page-specific icons --------------------------- */
 
@@ -48,155 +53,18 @@ function IconBars({ className }: IconProps) {
 }
 
 /* --------------------------------- mock data -------------------------------- */
-
-const PLAN = {
-  tier: "Pro",
-  price: "$49/mo",
-  renewsOn: "Aug 14, 2026",
-};
-
-const USAGE = { used: 8412, limit: 10000, resetsInDays: 15 };
-
+/* No backend concept of connected data sources exists yet — out of scope for
+   the queries/billing/messaging work. Left as a static placeholder. */
 const DATA_SOURCES = {
   connected: 3,
   limit: 5,
   list: ["prod_postgres", "warehouse_bq", "stripe_sync"],
 };
 
-type Column = { key: string; label: string; numeric?: boolean; currency?: boolean };
-
-type ResultSet = {
-  id: string;
-  question: string;
-  sql: string;
-  columns: Column[];
-  rows: Record<string, string | number>[];
-  chart: { label: string; value: number }[];
-  chartCaption: string;
-  chartHorizontal?: boolean;
-};
-
-const RESULT_SETS: ResultSet[] = [
-  {
-    id: "revenue-by-region",
-    question: "Monthly revenue by region, last 6 months",
-    sql: `SELECT region,
-       date_trunc('month', created_at) AS month,
-       SUM(amount)::numeric(12,2) AS revenue,
-       COUNT(*) AS orders
-FROM orders
-WHERE created_at >= now() - interval '6 months'
-GROUP BY region, month
-ORDER BY month, region;`,
-    columns: [
-      { key: "region", label: "Region" },
-      { key: "month", label: "Month" },
-      { key: "revenue", label: "Revenue", numeric: true, currency: true },
-      { key: "orders", label: "Orders", numeric: true },
-    ],
-    rows: [
-      { region: "NA", month: "Feb", revenue: 128400, orders: 812 },
-      { region: "EMEA", month: "Feb", revenue: 94200, orders: 601 },
-      { region: "APAC", month: "Feb", revenue: 61300, orders: 388 },
-      { region: "NA", month: "Mar", revenue: 141900, orders: 874 },
-      { region: "EMEA", month: "Mar", revenue: 101500, orders: 655 },
-      { region: "APAC", month: "Mar", revenue: 68900, orders: 421 },
-      { region: "NA", month: "Apr", revenue: 156200, orders: 940 },
-      { region: "EMEA", month: "Apr", revenue: 108700, orders: 690 },
-      { region: "APAC", month: "Apr", revenue: 74800, orders: 459 },
-    ],
-    chart: [
-      { label: "NA", value: 426500 },
-      { label: "EMEA", value: 304400 },
-      { label: "APAC", value: 205000 },
-    ],
-    chartCaption: "Revenue by region, 3-month total (USD)",
-  },
-  {
-    id: "top-customers",
-    question: "Top customers by lifetime value",
-    sql: `SELECT c.name AS customer,
-       c.plan,
-       SUM(o.amount)::numeric(12,2) AS ltv,
-       COUNT(o.id) AS orders
-FROM customers c
-JOIN orders o ON o.customer_id = c.id
-GROUP BY c.name, c.plan
-ORDER BY ltv DESC
-LIMIT 7;`,
-    columns: [
-      { key: "customer", label: "Customer" },
-      { key: "plan", label: "Plan" },
-      { key: "ltv", label: "LTV", numeric: true, currency: true },
-      { key: "orders", label: "Orders", numeric: true },
-    ],
-    rows: [
-      { customer: "Northwind Traders", plan: "Enterprise", ltv: 84200, orders: 46 },
-      { customer: "Globex Retail", plan: "Enterprise", ltv: 71950, orders: 39 },
-      { customer: "Initech Labs", plan: "Pro", ltv: 52300, orders: 61 },
-      { customer: "Umbrella Supply", plan: "Pro", ltv: 44100, orders: 28 },
-      { customer: "Soylent Foods", plan: "Team", ltv: 31800, orders: 22 },
-      { customer: "Hooli Devices", plan: "Team", ltv: 27650, orders: 19 },
-      { customer: "Wayne Logistics", plan: "Pro", ltv: 22400, orders: 15 },
-    ],
-    chart: [
-      { label: "Northwind", value: 84200 },
-      { label: "Globex", value: 71950 },
-      { label: "Initech", value: 52300 },
-      { label: "Umbrella", value: 44100 },
-      { label: "Soylent", value: 31800 },
-      { label: "Hooli", value: 27650 },
-      { label: "Wayne", value: 22400 },
-    ],
-    chartCaption: "Lifetime value by customer (USD)",
-    chartHorizontal: true,
-  },
-  {
-    id: "failed-payments",
-    question: "Payments that failed in the last 7 days",
-    sql: `SELECT o.id AS order_id,
-       c.name AS customer,
-       o.amount,
-       o.failure_reason,
-       o.created_at::date AS date
-FROM orders o
-JOIN customers c ON c.id = o.customer_id
-WHERE o.status = 'failed'
-  AND o.created_at >= now() - interval '7 days'
-ORDER BY o.created_at DESC;`,
-    columns: [
-      { key: "order_id", label: "Order" },
-      { key: "customer", label: "Customer" },
-      { key: "amount", label: "Amount", numeric: true, currency: true },
-      { key: "reason", label: "Failure reason" },
-      { key: "date", label: "Date" },
-    ],
-    rows: [
-      { order_id: "#8841", customer: "Hooli Devices", amount: 1200, reason: "Card declined", date: "Jul 28" },
-      { order_id: "#8833", customer: "Wayne Logistics", amount: 640, reason: "Insufficient funds", date: "Jul 27" },
-      { order_id: "#8820", customer: "Soylent Foods", amount: 2150, reason: "Card declined", date: "Jul 25" },
-      { order_id: "#8807", customer: "Umbrella Supply", amount: 980, reason: "Expired card", date: "Jul 24" },
-      { order_id: "#8795", customer: "Initech Labs", amount: 315, reason: "Card declined", date: "Jul 23" },
-    ],
-    chart: [
-      { label: "Card declined", value: 3 },
-      { label: "Insufficient funds", value: 1 },
-      { label: "Expired card", value: 1 },
-    ],
-    chartCaption: "Failed payments by reason, last 7 days",
-    chartHorizontal: true,
-  },
-];
-
-const RECENT_QUERIES: Array<
-  | { kind: "ok"; question: string; time: string; rows: number; datasetIndex: number }
-  | { kind: "error"; question: string; time: string }
-> = [
-  { kind: "ok", question: "Monthly revenue by region, last 6 months", time: "2m ago", rows: 9, datasetIndex: 0 },
-  { kind: "ok", question: "Top customers by lifetime value", time: "38m ago", rows: 7, datasetIndex: 1 },
-  { kind: "error", question: "orders where region = ''", time: "1h ago" },
-  { kind: "ok", question: "Payments that failed in the last 7 days", time: "3h ago", rows: 5, datasetIndex: 2 },
-  { kind: "ok", question: "Revenue by region for March only", time: "Yesterday", rows: 9, datasetIndex: 0 },
+const EXAMPLE_QUESTIONS = [
+  "Monthly revenue by region, last 6 months",
+  "Top customers by lifetime value",
+  "Payments that failed in the last 7 days",
 ];
 
 /* -------------------------------- formatting -------------------------------- */
@@ -207,6 +75,18 @@ function formatCurrency(n: number) {
 
 function formatNumber(n: number) {
   return n.toLocaleString("en-US");
+}
+
+function formatRelativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Yesterday";
+  return `${days}d ago`;
 }
 
 function usageTone(pct: number): "accent" | "warning" | "danger" {
@@ -305,22 +185,28 @@ function BarChart({
 
 /* ---------------------------------- layout ----------------------------------- */
 
-function StatRow() {
-  const pct = Math.round((USAGE.used / USAGE.limit) * 100);
+function StatRow({ subscription, queryCount }: { subscription: Subscription; queryCount: number }) {
+  const limit = subscription.queryLimit;
+  const pct = limit ? Math.round((queryCount / limit) * 100) : 0;
   const tone = usageTone(pct);
+  const renewsOn = new Date(subscription.currentPeriodEnd).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
         <p className="font-mono text-xs uppercase tracking-wide text-ink-3">Current plan</p>
         <div className="flex items-center gap-2">
-          <span className="text-2xl font-semibold text-ink">{PLAN.tier}</span>
+          <span className="text-2xl font-semibold text-ink">{subscription.planName}</span>
           <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
-            Active
+            {subscription.status === "ACTIVE" ? "Active" : "Canceling"}
           </span>
         </div>
         <p className="text-sm text-ink-2">
-          {PLAN.price} · renews {PLAN.renewsOn}
+          {subscription.monthlyPrice !== null ? `$${subscription.monthlyPrice}/mo` : "Custom pricing"} · renews {renewsOn}
         </p>
         <Link href="/payments" className="mt-1 self-start text-sm text-accent hover:text-accent-2">
           Manage billing →
@@ -328,17 +214,25 @@ function StatRow() {
       </div>
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
-        <p className="font-mono text-xs uppercase tracking-wide text-ink-3">Queries this cycle</p>
+        <p className="font-mono text-xs uppercase tracking-wide text-ink-3">Queries used</p>
         <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-2xl tabular-nums text-ink">{formatNumber(USAGE.used)}</span>
-          <span className="font-mono text-sm tabular-nums text-ink-3">/ {formatNumber(USAGE.limit)}</span>
+          <span className="font-mono text-2xl tabular-nums text-ink">{formatNumber(queryCount)}</span>
+          <span className="font-mono text-sm tabular-nums text-ink-3">
+            {limit ? `/ ${formatNumber(limit)}` : "/ unlimited"}
+          </span>
         </div>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-          <div className={`h-full rounded-full ${TONE_BAR[tone]}`} style={{ width: `${pct}%` }} />
-        </div>
-        <p className="text-sm text-ink-2">
-          <span className={`font-medium ${TONE_TEXT[tone]}`}>{pct}% used</span> · resets in {USAGE.resetsInDays} days
-        </p>
+        {limit ? (
+          <>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+              <div className={`h-full rounded-full ${TONE_BAR[tone]}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+            </div>
+            <p className="text-sm text-ink-2">
+              <span className={`font-medium ${TONE_TEXT[tone]}`}>{pct}% used</span>
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-ink-2">No monthly limit on your plan.</p>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-5">
@@ -371,14 +265,15 @@ function QueryComposer({
   onChangeText,
   onRun,
   isRunning,
+  usagePct,
 }: {
   queryText: string;
   onChangeText: (v: string) => void;
   onRun: () => void;
   isRunning: boolean;
+  usagePct: number;
 }) {
-  const pct = Math.round((USAGE.used / USAGE.limit) * 100);
-  const tone = usageTone(pct);
+  const tone = usageTone(usagePct);
 
   return (
     <div className="rounded-xl border border-border bg-surface p-5">
@@ -410,14 +305,14 @@ function QueryComposer({
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs text-ink-3">Try:</span>
-          {RESULT_SETS.map((r) => (
+          {EXAMPLE_QUESTIONS.map((q) => (
             <button
-              key={r.id}
+              key={q}
               type="button"
-              onClick={() => onChangeText(r.question)}
+              onClick={() => onChangeText(q)}
               className="rounded-full border border-border px-3 py-1 text-xs text-ink-2 transition-colors hover:border-accent/50 hover:text-ink"
             >
-              {r.question}
+              {q}
             </button>
           ))}
         </div>
@@ -436,11 +331,11 @@ function QueryComposer({
         </div>
       </div>
 
-      {pct >= 80 && (
+      {usagePct >= 80 && (
         <div className={`mt-3 flex items-center gap-2 text-xs ${TONE_TEXT[tone]}`}>
           <IconWarning className="h-3.5 w-3.5" />
           <span>
-            You&rsquo;re at {pct}% of your monthly query limit.{" "}
+            You&rsquo;re at {usagePct}% of your monthly query limit.{" "}
             <Link href="/payments" className="text-accent hover:text-accent-2">
               Upgrade plan
             </Link>{" "}
@@ -483,7 +378,7 @@ function ResultsPanel({
   view,
   onChangeView,
 }: {
-  result: ResultSet | null;
+  result: QueryResult | null;
   isRunning: boolean;
   view: "table" | "chart";
   onChangeView: (v: "table" | "chart") => void;
@@ -586,48 +481,56 @@ function ResultsPanel({
       </details>
 
       <div className="border-t border-border px-5 py-3">
-        <p className="font-mono text-xs tabular-nums text-ink-3">
-          {result.rows.length} rows returned in {(180 + result.rows.length * 12) % 900}ms
-        </p>
+        <p className="font-mono text-xs tabular-nums text-ink-3">{result.rows.length} rows returned</p>
       </div>
     </div>
   );
 }
 
-function RecentQueriesRail({ onSelect }: { onSelect: (datasetIndex: number, question: string) => void }) {
+function RecentQueriesRail({
+  queries,
+  onSelect,
+}: {
+  queries: RecentQuery[];
+  onSelect: (question: string) => void;
+}) {
   return (
     <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface p-4">
       <div className="mb-1 flex items-center justify-between">
         <p className="text-sm font-medium text-ink">Recent queries</p>
-        <span className="font-mono text-xs text-ink-3">{RECENT_QUERIES.length}</span>
+        <span className="font-mono text-xs text-ink-3">{queries.length}</span>
       </div>
-      <ul className="flex flex-col">
-        {RECENT_QUERIES.map((q, i) => (
-          <li key={i} className="border-t border-border first:border-0">
-            {q.kind === "ok" ? (
-              <button
-                type="button"
-                onClick={() => onSelect(q.datasetIndex, q.question)}
-                className="flex w-full flex-col gap-1 py-3 text-left"
-              >
-                <span className="truncate text-sm text-ink-2 hover:text-ink">{q.question}</span>
-                <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-3">
-                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                  {q.time} · {q.rows} rows
-                </span>
-              </button>
-            ) : (
-              <div className="flex cursor-not-allowed flex-col gap-1 py-3" title="This query failed — no results to show">
-                <span className="truncate text-sm text-ink-3">{q.question}</span>
-                <span className="flex items-center gap-1.5 font-mono text-[11px] text-danger">
-                  <span className="h-1.5 w-1.5 rounded-full bg-danger" />
-                  {q.time} · failed
-                </span>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
+      {queries.length === 0 ? (
+        <p className="py-3 text-sm text-ink-3">No queries yet — ask something above.</p>
+      ) : (
+        <ul className="flex flex-col">
+          {queries.map((q) => (
+            <li key={q.id} className="border-t border-border first:border-0">
+              {q.status === "OK" ? (
+                <button
+                  type="button"
+                  onClick={() => onSelect(q.question)}
+                  className="flex w-full flex-col gap-1 py-3 text-left"
+                >
+                  <span className="truncate text-sm text-ink-2 hover:text-ink">{q.question}</span>
+                  <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-3">
+                    <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                    {formatRelativeTime(q.createdAt)} · {q.rowCount ?? 0} rows
+                  </span>
+                </button>
+              ) : (
+                <div className="flex cursor-not-allowed flex-col gap-1 py-3" title="This query failed — no results to show">
+                  <span className="truncate text-sm text-ink-3">{q.question}</span>
+                  <span className="flex items-center gap-1.5 font-mono text-[11px] text-danger">
+                    <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+                    {formatRelativeTime(q.createdAt)} · failed
+                  </span>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -635,33 +538,75 @@ function RecentQueriesRail({ onSelect }: { onSelect: (datasetIndex: number, ques
 /* --------------------------------- page root --------------------------------- */
 
 export default function ProductsDashboard() {
+  const { apiFetch } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [queryCount, setQueryCount] = useState(0);
+  const [recentQueries, setRecentQueries] = useState<RecentQuery[]>([]);
+
   const [queryText, setQueryText] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [activeResult, setActiveResult] = useState<QueryResult | null>(null);
   const [view, setView] = useState<"table" | "chart">("table");
 
-  const activeResult = useMemo(
-    () => (activeIndex === null ? null : RESULT_SETS[activeIndex]),
-    [activeIndex]
-  );
+  useEffect(() => {
+    Promise.all([getSubscription(apiFetch), getQueryCount(apiFetch), getRecentQueries(apiFetch)])
+      .then(([subRes, countRes, recentRes]) => {
+        setSubscription(subRes);
+        setQueryCount(countRes.count);
+        setRecentQueries(recentRes);
+      })
+      .catch(() => setLoadError("Couldn't load your workspace data. Try refreshing the page."))
+      .finally(() => setLoading(false));
+  }, [apiFetch]);
 
-  function runDataset(index: number, question: string) {
+  async function runQuery(question: string) {
     setQueryText(question);
     setIsRunning(true);
-    setActiveIndex(null);
-    window.setTimeout(() => {
-      setActiveIndex(index);
-      setIsRunning(false);
+    setRunError(null);
+    setActiveResult(null);
+    try {
+      const result = await askQuery(apiFetch, question);
+      setActiveResult(result);
       setView("table");
-    }, 650);
+      const [countRes, recentRes] = await Promise.all([getQueryCount(apiFetch), getRecentQueries(apiFetch)]);
+      setQueryCount(countRes.count);
+      setRecentQueries(recentRes);
+    } catch (err) {
+      setRunError(err instanceof ApiError ? err.message : "Something went wrong running that query.");
+    } finally {
+      setIsRunning(false);
+    }
   }
 
   function handleRun() {
     const trimmed = queryText.trim();
     if (!trimmed) return;
-    const matchIndex = RESULT_SETS.findIndex((r) => r.question.toLowerCase() === trimmed.toLowerCase());
-    runDataset(matchIndex === -1 ? 0 : matchIndex, trimmed);
+    void runQuery(trimmed);
   }
+
+  if (loading) {
+    return (
+      <AppShell active="overview" title="Overview">
+        <div className="flex flex-1 items-center justify-center text-sm text-ink-3">Loading your workspace…</div>
+      </AppShell>
+    );
+  }
+
+  if (loadError || !subscription) {
+    return (
+      <AppShell active="overview" title="Overview">
+        <div className="flex flex-1 items-center justify-center text-sm text-danger">
+          {loadError ?? "No workspace data available."}
+        </div>
+      </AppShell>
+    );
+  }
+
+  const limit = subscription.queryLimit;
+  const usagePct = limit ? Math.round((queryCount / limit) * 100) : 0;
 
   return (
     <AppShell
@@ -676,11 +621,18 @@ export default function ProductsDashboard() {
         </Link>
       }
     >
-      <StatRow />
-      <QueryComposer queryText={queryText} onChangeText={setQueryText} onRun={handleRun} isRunning={isRunning} />
+      <StatRow subscription={subscription} queryCount={queryCount} />
+      <QueryComposer
+        queryText={queryText}
+        onChangeText={setQueryText}
+        onRun={handleRun}
+        isRunning={isRunning}
+        usagePct={usagePct}
+      />
+      {runError && <p className="text-sm text-danger">{runError}</p>}
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[1fr_320px]">
         <ResultsPanel result={activeResult} isRunning={isRunning} view={view} onChangeView={setView} />
-        <RecentQueriesRail onSelect={runDataset} />
+        <RecentQueriesRail queries={recentQueries} onSelect={(q) => void runQuery(q)} />
       </div>
     </AppShell>
   );
